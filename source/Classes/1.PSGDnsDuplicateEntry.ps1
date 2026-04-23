@@ -70,8 +70,13 @@ class PSGDnsDuplicateEntry
             'MX'    { return $Record.RecordData.MailExchange }
             'PTR'   { return $Record.RecordData.PtrDomainName }
             'TXT'   { return $Record.RecordData.DescriptiveText }
+<<<<<<< HEAD
             #default { return $Record.RecordData.ToString() }
         }
+=======
+        }
+
+>>>>>>> 54a24752ae89b7bfe032da99530a7a7b97b69c81
         return $Record.RecordData.ToString()
     }
 
