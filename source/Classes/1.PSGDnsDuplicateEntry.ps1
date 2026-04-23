@@ -70,8 +70,9 @@ class PSGDnsDuplicateEntry
             'MX'    { return $Record.RecordData.MailExchange }
             'PTR'   { return $Record.RecordData.PtrDomainName }
             'TXT'   { return $Record.RecordData.DescriptiveText }
-            default { return $Record.RecordData.ToString() }
         }
+
+        return $Record.RecordData.ToString()
     }
 
     # Queries a DNS zone and returns PSGDnsDuplicateEntry objects for every duplicated hostname.
