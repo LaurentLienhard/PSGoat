@@ -70,6 +70,7 @@
         only works then the method of downloading dependencies is PSResourceGet.
         This can also be configured in Resolve-Dependency.psd1.
 #>
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification = 'Build script intentionally uses Write-Host for pipeline output visibility.')]
 [System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments', '', Justification = 'Suppressing this rule because how $PSDependTarget is assigned to splatting variable $resolveDependencyParams.')]
 [CmdletBinding()]
 param

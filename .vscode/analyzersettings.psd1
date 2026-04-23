@@ -1,8 +1,6 @@
 @{
-    CustomRulePath      = '.\output\RequiredModules\DscResource.AnalyzerRules'
     includeDefaultRules = $true
-    IncludeRules   = @(
-        # DSC Resource Kit style guideline rules.
+    IncludeRules        = @(
         'PSAvoidDefaultValueForMandatoryParameter',
         'PSAvoidDefaultValueSwitchParameter',
         'PSAvoidInvokingEmptyMembers',
@@ -16,10 +14,6 @@
         'PSAvoidShouldContinueWithoutForce',
         'PSAvoidUsingWMICmdlet',
         'PSAvoidUsingWriteHost',
-        'PSDSCReturnCorrectTypesForDSCFunctions',
-        'PSDSCStandardDSCFunctionsInResource',
-        'PSDSCUseIdenticalMandatoryParametersForDSC',
-        'PSDSCUseIdenticalParametersForDSC',
         'PSMisleadingBacktick',
         'PSMissingModuleManifestField',
         'PSPossibleIncorrectComparisonWithNull',
@@ -33,12 +27,8 @@
         'PSAvoidUsingConvertToSecureStringWithPlainText',
         'PSAvoidUsingPlainTextForPassword',
         'PSAvoidUsingUsernameAndPasswordParams',
-        'PSDSCUseVerboseMessageInDSCResource',
         'PSShouldProcess',
         'PSUseDeclaredVarsMoreThanAssignments',
-        'PSUsePSCredentialType',
-
-        'Measure-*'
+        'PSUsePSCredentialType'
     )
-
 }

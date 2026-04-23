@@ -18,6 +18,17 @@ BeforeDiscovery {
     $mut = Get-Module -Name $script:moduleName -ListAvailable |
         Select-Object -First 1 |
             Import-Module -Force -ErrorAction Stop -PassThru
+
+    $allModuleFunctions = & $mut { Get-Command -Module $args[0] -CommandType Function } $script:moduleName
+
+    $testCases = @()
+
+    foreach ($function in $allModuleFunctions)
+    {
+        $testCases += @{
+            Name = $function.Name
+        }
+    }
 }
 
 BeforeAll {
@@ -76,21 +87,6 @@ Describe 'General module control' -Tags 'FunctionalQuality' {
         { Remove-Module -Name $script:moduleName -ErrorAction Stop } | Should -Not -Throw
 
         Get-Module $script:moduleName | Should -BeNullOrEmpty
-    }
-}
-
-BeforeDiscovery {
-    # Must use the imported module to build test cases.
-    $allModuleFunctions = & $mut { Get-Command -Module $args[0] -CommandType Function } $script:moduleName
-
-    # Build test cases.
-    $testCases = @()
-
-    foreach ($function in $allModuleFunctions)
-    {
-        $testCases += @{
-            Name = $function.Name
-        }
     }
 }
 
@@ -183,8 +179,8 @@ Describe 'Help for module' -Tags 'helpQuality' {
         $functionHelp = $parsedFunction.GetHelpContent()
 
         $functionHelp.Examples.Count | Should -BeGreaterThan 0
-        $functionHelp.Examples[0] | Should -Match ([regex]::Escape($function.Name))
-        $functionHelp.Examples[0].Length | Should -BeGreaterThan ($function.Name.Length + 10)
+        $functionHelp.Examples[0] | Should -Match ([regex]::Escape($Name))
+        $functionHelp.Examples[0].Length | Should -BeGreaterThan ($Name.Length + 10)
 
     }
 
