@@ -16,9 +16,7 @@ Install-Module -Name PSGoat
 
 ## Public Functions
 
-| Function | Synopsis |
-|----------|----------|
-| `Get-Something` | Returns the input string passed via the `-Data` parameter. |
+No public functions yet.
 
 ## Build
 
