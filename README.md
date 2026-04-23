@@ -16,7 +16,9 @@ Install-Module -Name PSGoat
 
 ## Public Functions
 
-No public functions yet.
+| Function | Synopsis |
+|----------|----------|
+| `Get-PSGDnsDuplicateEntry` | Returns all duplicate DNS entries (same hostname, multiple records) from one or more DNS zones. Supports local and remote execution via `ComputerName`. |
 
 ## Build
 
