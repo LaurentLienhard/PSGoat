@@ -55,6 +55,41 @@ Describe 'PSGDnsDuplicateEntry' {
         }
     }
 
+    Context 'NewSession static method' {
+        It 'Should return null when Credential is null' {
+            InModuleScope $script:moduleName {
+                $result = [PSGDnsDuplicateEntry]::NewSession('dc01.contoso.com', $null)
+                $result | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'Should call New-CimSession when Credential is provided' {
+            InModuleScope $script:moduleName {
+                Mock -CommandName New-CimSession -MockWith { [PSCustomObject]@{ Id = 1 } }
+                $cred = [PSCredential]::new('user', (ConvertTo-SecureString 'pass' -AsPlainText -Force))
+                [PSGDnsDuplicateEntry]::NewSession('dc01.contoso.com', $cred) | Should -Not -BeNullOrEmpty
+                Should -Invoke -CommandName New-CimSession -Exactly -Times 1 -Scope It
+            }
+        }
+    }
+
+    Context 'RemoveSession static method' {
+        It 'Should not throw when CimSession is null' {
+            InModuleScope $script:moduleName {
+                { [PSGDnsDuplicateEntry]::RemoveSession($null) } | Should -Not -Throw
+            }
+        }
+
+        It 'Should call Remove-CimSession when a session is provided' {
+            InModuleScope $script:moduleName {
+                Mock -CommandName Remove-CimSession -MockWith {}
+                $fakeSession = [PSCustomObject]@{ Id = 1 }
+                [PSGDnsDuplicateEntry]::RemoveSession($fakeSession)
+                Should -Invoke -CommandName Remove-CimSession -Exactly -Times 1 -Scope It
+            }
+        }
+    }
+
     Context 'ExtractRecordData static method' {
         It 'Should return IPv4 address for A records' {
             InModuleScope $script:moduleName {
@@ -108,18 +143,29 @@ Describe 'PSGDnsDuplicateEntry' {
     }
 
     Context 'GetZones static method' {
-        It 'Should return only primary non-auto-created zones' {
+        It 'Should return only primary non-auto-created zones when CimSession is null' {
             InModuleScope $script:moduleName {
                 Mock -CommandName Get-DnsServerZone -MockWith {
                     @(
-                        [PSCustomObject]@{ ZoneName = 'contoso.com';  IsAutoCreated = $false; ZoneType = 'Primary' },
-                        [PSCustomObject]@{ ZoneName = 'auto.local';   IsAutoCreated = $true;  ZoneType = 'Primary' },
+                        [PSCustomObject]@{ ZoneName = 'contoso.com';   IsAutoCreated = $false; ZoneType = 'Primary'   },
+                        [PSCustomObject]@{ ZoneName = 'auto.local';    IsAutoCreated = $true;  ZoneType = 'Primary'   },
                         [PSCustomObject]@{ ZoneName = 'secondary.com'; IsAutoCreated = $false; ZoneType = 'Secondary' }
                     )
                 }
-                $zones = [PSGDnsDuplicateEntry]::GetZones('localhost')
+                $zones = [PSGDnsDuplicateEntry]::GetZones('localhost', $null)
                 $zones | Should -HaveCount 1
                 $zones[0] | Should -Be 'contoso.com'
+            }
+        }
+
+        It 'Should use CimSession when provided' {
+            InModuleScope $script:moduleName {
+                Mock -CommandName Get-DnsServerZone -MockWith {
+                    @([PSCustomObject]@{ ZoneName = 'contoso.com'; IsAutoCreated = $false; ZoneType = 'Primary' })
+                }
+                $fakeSession = [PSCustomObject]@{ Id = 1 }
+                [PSGDnsDuplicateEntry]::GetZones('dc01.contoso.com', $fakeSession)
+                Should -Invoke -CommandName Get-DnsServerZone -ParameterFilter { $null -ne $CimSession } -Exactly -Times 1 -Scope It
             }
         }
     }
@@ -134,7 +180,7 @@ Describe 'PSGDnsDuplicateEntry' {
                         [PSCustomObject]@{ HostName = 'server02'; RecordType = 'A'; RecordData = [PSCustomObject]@{ IPv4Address = [System.Net.IPAddress]::Parse('192.168.1.20') } }
                     )
                 }
-                $result = [PSGDnsDuplicateEntry]::FindInZone('localhost', 'contoso.com', @('A'))
+                $result = [PSGDnsDuplicateEntry]::FindInZone('localhost', 'contoso.com', @('A'), $null)
                 $result | Should -HaveCount 1
                 $result[0].HostName | Should -Be 'server01'
                 $result[0].DuplicateCount | Should -Be 2
@@ -149,8 +195,17 @@ Describe 'PSGDnsDuplicateEntry' {
                         [PSCustomObject]@{ HostName = 'server02'; RecordType = 'A'; RecordData = [PSCustomObject]@{ IPv4Address = [System.Net.IPAddress]::Parse('192.168.1.20') } }
                     )
                 }
-                $result = [PSGDnsDuplicateEntry]::FindInZone('localhost', 'contoso.com', @('A'))
+                $result = [PSGDnsDuplicateEntry]::FindInZone('localhost', 'contoso.com', @('A'), $null)
                 $result | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'Should use CimSession when provided' {
+            InModuleScope $script:moduleName {
+                Mock -CommandName Get-DnsServerResourceRecord -MockWith { @() }
+                $fakeSession = [PSCustomObject]@{ Id = 1 }
+                [PSGDnsDuplicateEntry]::FindInZone('dc01.contoso.com', 'contoso.com', @('A'), $fakeSession)
+                Should -Invoke -CommandName Get-DnsServerResourceRecord -ParameterFilter { $null -ne $CimSession } -Exactly -Times 1 -Scope It
             }
         }
     }

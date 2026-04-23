@@ -7,12 +7,18 @@ function Get-PSGDnsDuplicateEntry
       .DESCRIPTION
         Queries a DNS server for resource records and identifies entries where the same
         hostname has more than one record of the same type. Supports local execution or
-        remote execution via the ComputerName parameter, making it usable directly on
-        the target DNS server or from an admin workstation.
+        remote execution from an admin workstation via the ComputerName and Credential
+        parameters. When Credential is provided, a CimSession is established automatically
+        and cleaned up after execution.
 
       .PARAMETER ComputerName
         The DNS server to query. Defaults to the local machine. Accepts pipeline input
         to query multiple servers sequentially.
+
+      .PARAMETER Credential
+        Credentials to use when connecting to a remote DNS server. When provided, a
+        CimSession is created automatically. Not required for local execution or when
+        the current account already has access to the remote server.
 
       .PARAMETER ZoneName
         One or more DNS zone names to query. If omitted, all primary non-auto-created
@@ -30,17 +36,18 @@ function Get-PSGDnsDuplicateEntry
       .EXAMPLE
         Get-PSGDnsDuplicateEntry -ComputerName 'dc01.contoso.com' -ZoneName 'contoso.com'
 
-        Returns all duplicate A and AAAA records from the contoso.com zone on dc01.
+        Returns all duplicate A and AAAA records from the contoso.com zone on dc01 using the current account.
 
       .EXAMPLE
-        'dc01', 'dc02' | Get-PSGDnsDuplicateEntry -ZoneName 'contoso.com'
+        $cred = Get-Credential
+        Get-PSGDnsDuplicateEntry -ComputerName 'dc01.contoso.com' -Credential $cred
 
-        Queries two DNS servers in sequence for duplicate entries in the contoso.com zone.
+        Returns all duplicate entries from dc01 using explicit credentials.
 
       .EXAMPLE
-        Get-PSGDnsDuplicateEntry -ZoneName 'contoso.com' -RecordType A, CNAME
+        'dc01', 'dc02' | Get-PSGDnsDuplicateEntry -ZoneName 'contoso.com' -Credential (Get-Credential)
 
-        Returns duplicate A and CNAME records from the contoso.com zone on the local server.
+        Queries two remote DNS servers in sequence using the same credentials.
     #>
     [CmdletBinding()]
     [OutputType([PSGDnsDuplicateEntry[]])]
@@ -49,6 +56,10 @@ function Get-PSGDnsDuplicateEntry
         [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
         [string]
         $ComputerName = $env:COMPUTERNAME,
+
+        [Parameter()]
+        [PSCredential]
+        $Credential,
 
         [Parameter()]
         [string[]]
@@ -62,21 +73,35 @@ function Get-PSGDnsDuplicateEntry
 
     process
     {
-        if ($PSBoundParameters.ContainsKey('ZoneName'))
-        {
-            $zones = $ZoneName
-        }
-        else
-        {
-            Write-Verbose -Message ('Retrieving DNS zones from {0}' -f $ComputerName)
-            $zones = [PSGDnsDuplicateEntry]::GetZones($ComputerName)
-        }
+        $cimSession = $null
 
-        foreach ($zone in $zones)
+        try
         {
-            Write-Verbose -Message ('Processing zone: {0}' -f $zone)
+            if ($PSBoundParameters.ContainsKey('Credential'))
+            {
+                Write-Verbose -Message ('Creating CimSession on {0}' -f $ComputerName)
+                $cimSession = [PSGDnsDuplicateEntry]::NewSession($ComputerName, $Credential)
+            }
 
-            [PSGDnsDuplicateEntry]::FindInZone($ComputerName, $zone, $RecordType)
+            if ($PSBoundParameters.ContainsKey('ZoneName'))
+            {
+                $zones = $ZoneName
+            }
+            else
+            {
+                Write-Verbose -Message ('Retrieving DNS zones from {0}' -f $ComputerName)
+                $zones = [PSGDnsDuplicateEntry]::GetZones($ComputerName, $cimSession)
+            }
+
+            foreach ($zone in $zones)
+            {
+                Write-Verbose -Message ('Processing zone: {0}' -f $zone)
+                [PSGDnsDuplicateEntry]::FindInZone($ComputerName, $zone, $RecordType, $cimSession)
+            }
+        }
+        finally
+        {
+            [PSGDnsDuplicateEntry]::RemoveSession($cimSession)
         }
     }
 }

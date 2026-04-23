@@ -19,9 +19,39 @@ class PSGDnsDuplicateEntry
         $this.DuplicateCount = $RecordData.Count
     }
 
-    # Returns all primary zones from the target DNS server.
-    static [string[]] GetZones([string]$ComputerName)
+    # Creates a CimSession for remote execution with credentials. Returns $null for local execution.
+    static [object] NewSession([string]$ComputerName, [PSCredential]$Credential)
     {
+        if ($null -eq $Credential)
+        {
+            return $null
+        }
+
+        return New-CimSession -ComputerName $ComputerName -Credential $Credential
+    }
+
+    # Removes a CimSession created by NewSession. Safe to call with $null.
+    static [void] RemoveSession([object]$CimSession)
+    {
+        if ($null -ne $CimSession)
+        {
+            Remove-CimSession -CimSession $CimSession -ErrorAction SilentlyContinue
+        }
+    }
+
+    # Returns all primary non-auto-created zone names from the target DNS server.
+    # Pass $null for CimSession when no credentials are required.
+    static [string[]] GetZones([string]$ComputerName, [object]$CimSession)
+    {
+        if ($null -ne $CimSession)
+        {
+            return (
+                Get-DnsServerZone -CimSession $CimSession |
+                    Where-Object -FilterScript { -not $_.IsAutoCreated -and $_.ZoneType -eq 'Primary' } |
+                    Select-Object -ExpandProperty ZoneName
+            )
+        }
+
         return (
             Get-DnsServerZone -ComputerName $ComputerName |
                 Where-Object -FilterScript { -not $_.IsAutoCreated -and $_.ZoneType -eq 'Primary' } |
@@ -45,13 +75,21 @@ class PSGDnsDuplicateEntry
     }
 
     # Queries a DNS zone and returns PSGDnsDuplicateEntry objects for every duplicated hostname.
-    static [PSGDnsDuplicateEntry[]] FindInZone([string]$ComputerName, [string]$ZoneName, [string[]]$RecordType)
+    # Pass $null for CimSession when no credentials are required.
+    static [PSGDnsDuplicateEntry[]] FindInZone([string]$ComputerName, [string]$ZoneName, [string[]]$RecordType, [object]$CimSession)
     {
         $allRecords = [System.Collections.Generic.List[object]]::new()
 
         foreach ($type in $RecordType)
         {
-            $records = Get-DnsServerResourceRecord -ComputerName $ComputerName -ZoneName $ZoneName -RRType $type -ErrorAction SilentlyContinue
+            if ($null -ne $CimSession)
+            {
+                $records = Get-DnsServerResourceRecord -CimSession $CimSession -ZoneName $ZoneName -RRType $type -ErrorAction SilentlyContinue
+            }
+            else
+            {
+                $records = Get-DnsServerResourceRecord -ComputerName $ComputerName -ZoneName $ZoneName -RRType $type -ErrorAction SilentlyContinue
+            }
 
             if ($records)
             {
