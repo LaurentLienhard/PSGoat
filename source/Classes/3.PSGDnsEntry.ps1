@@ -6,13 +6,13 @@ class PSGDnsEntry : PSGDnsBase
     [string[]]$RecordData
     [int]$Count
     [bool]$IsStatic
-    [datetime]$TimeStamp
+    [Nullable[datetime]]$TimeStamp
 
     PSGDnsEntry()
     {
     }
 
-    PSGDnsEntry([string]$HostName, [string]$ZoneName, [string]$RecordType, [string[]]$RecordData, [bool]$IsStatic, [datetime]$TimeStamp)
+    PSGDnsEntry([string]$HostName, [string]$ZoneName, [string]$RecordType, [string[]]$RecordData, [bool]$IsStatic, [Nullable[datetime]]$TimeStamp)
     {
         $this.HostName   = $HostName
         $this.ZoneName   = $ZoneName
@@ -27,19 +27,12 @@ class PSGDnsEntry : PSGDnsBase
     # Filter restricts to Static or Dynamic records. DuplicatesOnly collapses groups with more than one record.
     static [PSGDnsEntry[]] GetEntries([string]$ComputerName, [string]$ZoneName, [string[]]$RecordType, [string]$Filter, [bool]$DuplicatesOnly, [object]$CimSession)
     {
+        $params     = if ($null -ne $CimSession) { @{ CimSession = $CimSession } } else { @{ ComputerName = $ComputerName } }
         $allRecords = [System.Collections.Generic.List[object]]::new()
 
         foreach ($type in $RecordType)
         {
-            if ($null -ne $CimSession)
-            {
-                $records = Get-DnsServerResourceRecord -CimSession $CimSession -ZoneName $ZoneName -RRType $type -ErrorAction SilentlyContinue
-            }
-            else
-            {
-                $records = Get-DnsServerResourceRecord -ComputerName $ComputerName -ZoneName $ZoneName -RRType $type -ErrorAction SilentlyContinue
-            }
-
+            $records = Get-DnsServerResourceRecord @params -ZoneName $ZoneName -RRType $type -ErrorAction SilentlyContinue
             if ($records)
             {
                 $allRecords.AddRange([object[]]@($records))
@@ -64,12 +57,12 @@ class PSGDnsEntry : PSGDnsBase
                 Group-Object -Property HostName, RecordType |
                 Where-Object -FilterScript { $_.Count -gt 1 } |
                 ForEach-Object -Process {
-                    $group    = $_
+                    $group     = $_
                     $allStatic = -not ($group.Group | Where-Object -FilterScript { -not [PSGDnsBase]::IsStaticRecord($_) })
 
                     $ts = if ($allStatic)
                     {
-                        [datetime]::MinValue
+                        $null
                     }
                     else
                     {
@@ -96,7 +89,7 @@ class PSGDnsEntry : PSGDnsBase
             foreach ($record in $filteredRecords)
             {
                 $recordIsStatic = [PSGDnsBase]::IsStaticRecord($record)
-                $ts       = if ($null -eq $record.TimeStamp) { [datetime]::MinValue } else { $record.TimeStamp }
+                $ts             = if ($recordIsStatic) { $null } else { $record.TimeStamp }
 
                 $results.Add([PSGDnsEntry]::new(
                     $record.HostName,

@@ -30,13 +30,6 @@ Describe 'PSGLogger' {
             }
         }
 
-        It 'Should generate a non-empty TraceId' {
-            InModuleScope $script:moduleName {
-                $logger = [PSGLogger]::new('PSGoat', '1.0.0')
-                $logger.TraceId | Should -Not -BeNullOrEmpty
-            }
-        }
-
         It 'Should generate a 32-character TraceId' {
             InModuleScope $script:moduleName {
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0')
@@ -56,6 +49,13 @@ Describe 'PSGLogger' {
                 $logger1 = [PSGLogger]::new('PSGoat', '1.0.0')
                 $logger2 = [PSGLogger]::new('PSGoat', '1.0.0')
                 $logger1.TraceId | Should -Not -Be $logger2.TraceId
+            }
+        }
+
+        It 'Should default RotationCheckInterval to 100' {
+            InModuleScope $script:moduleName {
+                $logger = [PSGLogger]::new('PSGoat', '1.0.0')
+                $logger.RotationCheckInterval | Should -Be 100
             }
         }
     }
@@ -100,6 +100,7 @@ Describe 'PSGLogger' {
                 Mock -CommandName Add-Content -MockWith {}
                 Mock -CommandName Test-Path -MockWith { $false }
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 1
                 $logger.Info('Test message')
                 Should -Invoke -CommandName Add-Content -Exactly -Times 1 -Scope It
             }
@@ -111,6 +112,7 @@ Describe 'PSGLogger' {
                 Mock -CommandName Add-Content -MockWith { $captured = $Value }
                 Mock -CommandName Test-Path -MockWith { $false }
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 1
                 $logger.Info('Test message')
                 { $captured | ConvertFrom-Json } | Should -Not -Throw
             }
@@ -122,6 +124,7 @@ Describe 'PSGLogger' {
                 Mock -CommandName Add-Content -MockWith { $captured = $Value }
                 Mock -CommandName Test-Path -MockWith { $false }
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 1
                 $logger.Info('Test message')
                 ($captured | ConvertFrom-Json).severityText | Should -Be 'INFO'
             }
@@ -133,6 +136,7 @@ Describe 'PSGLogger' {
                 Mock -CommandName Add-Content -MockWith { $captured = $Value }
                 Mock -CommandName Test-Path -MockWith { $false }
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 1
                 $logger.Info('Test message')
                 ($captured | ConvertFrom-Json).severityNumber | Should -Be 9
             }
@@ -144,6 +148,7 @@ Describe 'PSGLogger' {
                 Mock -CommandName Add-Content -MockWith { $captured = $Value }
                 Mock -CommandName Test-Path -MockWith { $false }
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 1
                 $logger.Info('Test message', @{ 'dns.zone' = 'contoso.com' })
                 ($captured | ConvertFrom-Json).attributes.'dns.zone' | Should -Be 'contoso.com'
             }
@@ -166,6 +171,7 @@ Describe 'PSGLogger' {
                 Mock -CommandName Add-Content -MockWith { $captured = $Value }
                 Mock -CommandName Test-Path -MockWith { $false }
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 1
                 $logger.Debug('Test message')
                 $record = $captured | ConvertFrom-Json
                 $record.severityText   | Should -Be 'DEBUG'
@@ -190,6 +196,7 @@ Describe 'PSGLogger' {
                 Mock -CommandName Add-Content -MockWith { $captured = $Value }
                 Mock -CommandName Test-Path -MockWith { $false }
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 1
                 $logger.Warn('Test message')
                 $record = $captured | ConvertFrom-Json
                 $record.severityText   | Should -Be 'WARN'
@@ -214,6 +221,7 @@ Describe 'PSGLogger' {
                 Mock -CommandName Add-Content -MockWith { $captured = $Value }
                 Mock -CommandName Test-Path -MockWith { $false }
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 1
                 $logger.Error('Test message')
                 $record = $captured | ConvertFrom-Json
                 $record.severityText   | Should -Be 'ERROR'
@@ -229,6 +237,7 @@ Describe 'PSGLogger' {
                 Mock -CommandName Add-Content -MockWith { $captured = $Value }
                 Mock -CommandName Test-Path -MockWith { $false }
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 1
                 $logger.Info('Test message')
                 ($captured | ConvertFrom-Json).resource.'service.name' | Should -Be 'PSGoat'
             }
@@ -240,6 +249,7 @@ Describe 'PSGLogger' {
                 Mock -CommandName Add-Content -MockWith { $captured = $Value }
                 Mock -CommandName Test-Path -MockWith { $false }
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 1
                 $logger.Info('Test message')
                 ($captured | ConvertFrom-Json).resource.'service.version' | Should -Be '1.0.0'
             }
@@ -251,6 +261,7 @@ Describe 'PSGLogger' {
                 Mock -CommandName Add-Content -MockWith { $captured = $Value }
                 Mock -CommandName Test-Path -MockWith { $false }
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 1
                 $logger.Info('Test message')
                 ($captured | ConvertFrom-Json).traceId | Should -Not -BeNullOrEmpty
             }
@@ -262,6 +273,7 @@ Describe 'PSGLogger' {
                 Mock -CommandName Add-Content -MockWith { $captured = $Value }
                 Mock -CommandName Test-Path -MockWith { $false }
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 1
                 $logger.Info('Hello from PSGoat')
                 ($captured | ConvertFrom-Json).body | Should -Be 'Hello from PSGoat'
             }
@@ -273,11 +285,10 @@ Describe 'PSGLogger' {
             InModuleScope $script:moduleName {
                 Mock -CommandName Add-Content -MockWith {}
                 Mock -CommandName Test-Path -MockWith { $true }
-                Mock -CommandName Get-Item -MockWith {
-                    [PSCustomObject]@{ Length = 11MB }
-                }
+                Mock -CommandName Get-Item -MockWith { [PSCustomObject]@{ Length = 11MB } }
                 Mock -CommandName Move-Item -MockWith {}
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 1
                 $logger.Info('Test message')
                 Should -Invoke -CommandName Move-Item -Exactly -Times 1 -Scope It
             }
@@ -287,11 +298,10 @@ Describe 'PSGLogger' {
             InModuleScope $script:moduleName {
                 Mock -CommandName Add-Content -MockWith {}
                 Mock -CommandName Test-Path -MockWith { $true }
-                Mock -CommandName Get-Item -MockWith {
-                    [PSCustomObject]@{ Length = 1MB }
-                }
+                Mock -CommandName Get-Item -MockWith { [PSCustomObject]@{ Length = 1MB } }
                 Mock -CommandName Move-Item -MockWith {}
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 1
                 $logger.Info('Test message')
                 Should -Invoke -CommandName Move-Item -Exactly -Times 0 -Scope It
             }
@@ -303,7 +313,21 @@ Describe 'PSGLogger' {
                 Mock -CommandName Test-Path -MockWith { $false }
                 Mock -CommandName Move-Item -MockWith {}
                 $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 1
                 $logger.Info('Test message')
+                Should -Invoke -CommandName Move-Item -Exactly -Times 0 -Scope It
+            }
+        }
+
+        It 'Should not check rotation before reaching RotationCheckInterval' {
+            InModuleScope $script:moduleName {
+                Mock -CommandName Add-Content -MockWith {}
+                Mock -CommandName Test-Path -MockWith { $true }
+                Mock -CommandName Get-Item -MockWith { [PSCustomObject]@{ Length = 11MB } }
+                Mock -CommandName Move-Item -MockWith {}
+                $logger = [PSGLogger]::new('PSGoat', '1.0.0', 'C:\Logs\test.log')
+                $logger.RotationCheckInterval = 5
+                1..4 | ForEach-Object { $logger.Info('Test message') }
                 Should -Invoke -CommandName Move-Item -Exactly -Times 0 -Scope It
             }
         }

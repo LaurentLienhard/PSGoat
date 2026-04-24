@@ -8,7 +8,7 @@ class PSGDnsBase
             return $null
         }
 
-        return New-CimSession -ComputerName $ComputerName -Credential $Credential
+        return New-CimSession -ComputerName $ComputerName -Credential $Credential -ErrorAction Stop
     }
 
     # Removes a CimSession created by NewSession. Safe to call with $null.
@@ -23,17 +23,10 @@ class PSGDnsBase
     # Returns all primary non-auto-created zone names from the target DNS server.
     static [string[]] GetZones([string]$ComputerName, [object]$CimSession)
     {
-        if ($null -ne $CimSession)
-        {
-            return (
-                Get-DnsServerZone -CimSession $CimSession |
-                    Where-Object -FilterScript { -not $_.IsAutoCreated -and $_.ZoneType -eq 'Primary' } |
-                    Select-Object -ExpandProperty ZoneName
-            )
-        }
+        $params = if ($null -ne $CimSession) { @{ CimSession = $CimSession } } else { @{ ComputerName = $ComputerName } }
 
         return (
-            Get-DnsServerZone -ComputerName $ComputerName |
+            Get-DnsServerZone @params |
                 Where-Object -FilterScript { -not $_.IsAutoCreated -and $_.ZoneType -eq 'Primary' } |
                 Select-Object -ExpandProperty ZoneName
         )
@@ -55,6 +48,7 @@ class PSGDnsBase
             'CNAME' { return $Record.RecordData.HostNameAlias }
             'MX'    { return $Record.RecordData.MailExchange }
             'PTR'   { return $Record.RecordData.PtrDomainName }
+            'SRV'   { return '{0} {1} {2} {3}' -f $Record.RecordData.Priority, $Record.RecordData.Weight, $Record.RecordData.Port, $Record.RecordData.DomainName }
             'TXT'   { return $Record.RecordData.DescriptiveText }
         }
 

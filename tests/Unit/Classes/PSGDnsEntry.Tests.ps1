@@ -19,28 +19,28 @@ Describe 'PSGDnsEntry' {
     Context 'Parameterized constructor' {
         It 'Should set HostName correctly' {
             InModuleScope $script:moduleName {
-                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10'), $true, [datetime]::MinValue)
+                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10'), $true, $null)
                 $entry.HostName | Should -Be 'server01'
             }
         }
 
         It 'Should set ZoneName correctly' {
             InModuleScope $script:moduleName {
-                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10'), $true, [datetime]::MinValue)
+                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10'), $true, $null)
                 $entry.ZoneName | Should -Be 'contoso.com'
             }
         }
 
         It 'Should set RecordType correctly' {
             InModuleScope $script:moduleName {
-                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10'), $true, [datetime]::MinValue)
+                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10'), $true, $null)
                 $entry.RecordType | Should -Be 'A'
             }
         }
 
         It 'Should set RecordData correctly' {
             InModuleScope $script:moduleName {
-                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10', '192.168.1.11'), $true, [datetime]::MinValue)
+                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10', '192.168.1.11'), $true, $null)
                 $entry.RecordData | Should -HaveCount 2
                 $entry.RecordData[0] | Should -Be '192.168.1.10'
                 $entry.RecordData[1] | Should -Be '192.168.1.11'
@@ -49,46 +49,30 @@ Describe 'PSGDnsEntry' {
 
         It 'Should compute Count from RecordData length' {
             InModuleScope $script:moduleName {
-                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10', '192.168.1.11'), $true, [datetime]::MinValue)
+                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10', '192.168.1.11'), $true, $null)
                 $entry.Count | Should -Be 2
             }
         }
 
-        It 'Should set IsStatic correctly' {
+        It 'Should set IsStatic to true for static entries' {
             InModuleScope $script:moduleName {
-                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10'), $true, [datetime]::MinValue)
+                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10'), $true, $null)
                 $entry.IsStatic | Should -BeTrue
             }
         }
 
-        It 'Should set TimeStamp correctly' {
+        It 'Should set TimeStamp to null for static entries' {
+            InModuleScope $script:moduleName {
+                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10'), $true, $null)
+                $entry.TimeStamp | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'Should set TimeStamp correctly for dynamic entries' {
             InModuleScope $script:moduleName {
                 $ts = [datetime]'2025-01-15 10:00:00'
-                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10'), $false, $ts)
+                $entry = [PSGDnsEntry]::new('workstation01', 'contoso.com', 'A', @('192.168.1.50'), $false, $ts)
                 $entry.TimeStamp | Should -Be $ts
-            }
-        }
-    }
-
-    Context 'IsStaticRecord static method' {
-        It 'Should return true when TimeStamp is MinValue' {
-            InModuleScope $script:moduleName {
-                $record = [PSCustomObject]@{ TimeStamp = [datetime]::MinValue }
-                [PSGDnsEntry]::IsStaticRecord($record) | Should -BeTrue
-            }
-        }
-
-        It 'Should return true when TimeStamp is null' {
-            InModuleScope $script:moduleName {
-                $record = [PSCustomObject]@{ TimeStamp = $null }
-                [PSGDnsEntry]::IsStaticRecord($record) | Should -BeTrue
-            }
-        }
-
-        It 'Should return false when TimeStamp has an actual value' {
-            InModuleScope $script:moduleName {
-                $record = [PSCustomObject]@{ TimeStamp = [datetime]'2025-01-15 10:00:00' }
-                [PSGDnsEntry]::IsStaticRecord($record) | Should -BeFalse
             }
         }
     }
@@ -138,6 +122,22 @@ Describe 'PSGDnsEntry' {
             }
         }
 
+        It 'Should set TimeStamp to null for static entries' {
+            InModuleScope $script:moduleName -Parameters @{ SR = $script:staticRecord } {
+                Mock -CommandName Get-DnsServerResourceRecord -MockWith { @($SR) }
+                $result = [PSGDnsEntry]::GetEntries('localhost', 'contoso.com', @('A'), 'All', $false, $null)
+                $result[0].TimeStamp | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'Should set TimeStamp for dynamic entries' {
+            InModuleScope $script:moduleName -Parameters @{ DR = $script:dynamicRecord } {
+                Mock -CommandName Get-DnsServerResourceRecord -MockWith { @($DR) }
+                $result = [PSGDnsEntry]::GetEntries('localhost', 'contoso.com', @('A'), 'All', $false, $null)
+                $result[0].TimeStamp | Should -Not -BeNullOrEmpty
+            }
+        }
+
         It 'Should set Count to 1 for each individual record' {
             InModuleScope $script:moduleName -Parameters @{ SR = $script:staticRecord } {
                 Mock -CommandName Get-DnsServerResourceRecord -MockWith { @($SR) }
@@ -149,8 +149,7 @@ Describe 'PSGDnsEntry' {
         It 'Should use CimSession when provided' {
             InModuleScope $script:moduleName {
                 Mock -CommandName Get-DnsServerResourceRecord -MockWith { @() }
-                $fakeSession = [PSCustomObject]@{ Id = 1 }
-                [PSGDnsEntry]::GetEntries('dc01.contoso.com', 'contoso.com', @('A'), 'All', $false, $fakeSession)
+                [PSGDnsEntry]::GetEntries('dc01.contoso.com', 'contoso.com', @('A'), 'All', $false, [PSCustomObject]@{ Id = 1 })
                 Should -Invoke -CommandName Get-DnsServerResourceRecord -ParameterFilter { $null -ne $CimSession } -Exactly -Times 1 -Scope It
             }
         }
@@ -222,11 +221,12 @@ Describe 'PSGDnsEntry' {
             }
         }
 
-        It 'Should set IsStatic to true when all duplicate records are static' {
+        It 'Should set IsStatic to true and TimeStamp to null when all duplicate records are static' {
             InModuleScope $script:moduleName -Parameters @{ R1 = $script:dupRecord1; R2 = $script:dupRecord2 } {
                 Mock -CommandName Get-DnsServerResourceRecord -MockWith { @($R1, $R2) }
                 $result = [PSGDnsEntry]::GetEntries('localhost', 'contoso.com', @('A'), 'All', $true, $null)
-                $result[0].IsStatic | Should -BeTrue
+                $result[0].IsStatic  | Should -BeTrue
+                $result[0].TimeStamp | Should -BeNullOrEmpty
             }
         }
 
@@ -252,7 +252,7 @@ Describe 'PSGDnsEntry' {
     Context 'ToString method' {
         It 'Should format a single static entry correctly' {
             InModuleScope $script:moduleName {
-                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10'), $true, [datetime]::MinValue)
+                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10'), $true, $null)
                 $entry.ToString() | Should -Match '\[A\]'
                 $entry.ToString() | Should -Match '\[Static\]'
                 $entry.ToString() | Should -Match 'server01'
@@ -270,7 +270,7 @@ Describe 'PSGDnsEntry' {
 
         It 'Should format a duplicate group with record count and all data values' {
             InModuleScope $script:moduleName {
-                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10', '192.168.1.11'), $true, [datetime]::MinValue)
+                $entry = [PSGDnsEntry]::new('server01', 'contoso.com', 'A', @('192.168.1.10', '192.168.1.11'), $true, $null)
                 $entry.ToString() | Should -Match '2 records'
                 $entry.ToString() | Should -Match '192\.168\.1\.10'
                 $entry.ToString() | Should -Match '192\.168\.1\.11'

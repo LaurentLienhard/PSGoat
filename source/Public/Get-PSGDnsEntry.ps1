@@ -113,13 +113,15 @@ function Get-PSGDnsEntry
 
     process
     {
+        $moduleVersion = $MyInvocation.MyCommand.Module.Version.ToString()
+
         if ($PSBoundParameters.ContainsKey('LogFilePath'))
         {
-            $logger = [PSGLogger]::new('PSGoat', '0.1.0', $LogFilePath)
+            $logger = [PSGLogger]::new('PSGoat', $moduleVersion, $LogFilePath)
         }
         else
         {
-            $logger = [PSGLogger]::new('PSGoat', '0.1.0')
+            $logger = [PSGLogger]::new('PSGoat', $moduleVersion)
         }
 
         $cimSession = $null

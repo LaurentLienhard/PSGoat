@@ -7,28 +7,32 @@ class PSGLogger
     [string]$TraceId
     [string]$SpanId
     [long]$MaxFileSizeBytes
+    [int]$RotationCheckInterval
+    hidden [int]$WriteCount
+
+    hidden [void] Init([string]$ServiceName, [string]$ServiceVersion)
+    {
+        $this.ServiceName           = $ServiceName
+        $this.ServiceVersion        = $ServiceVersion
+        $this.FileLoggingEnabled    = $false
+        $this.MaxFileSizeBytes      = 10MB
+        $this.RotationCheckInterval = 100
+        $this.TraceId               = [System.Guid]::NewGuid().ToString('N')
+        $this.SpanId                = [System.Guid]::NewGuid().ToString('N').Substring(0, 16)
+    }
 
     # Console-only logger.
     PSGLogger([string]$ServiceName, [string]$ServiceVersion)
     {
-        $this.ServiceName        = $ServiceName
-        $this.ServiceVersion     = $ServiceVersion
-        $this.FileLoggingEnabled = $false
-        $this.MaxFileSizeBytes   = 10MB
-        $this.TraceId            = [System.Guid]::NewGuid().ToString('N')
-        $this.SpanId             = [System.Guid]::NewGuid().ToString('N').Substring(0, 16)
+        $this.Init($ServiceName, $ServiceVersion)
     }
 
     # Console + file logger.
     PSGLogger([string]$ServiceName, [string]$ServiceVersion, [string]$LogFilePath)
     {
-        $this.ServiceName        = $ServiceName
-        $this.ServiceVersion     = $ServiceVersion
+        $this.Init($ServiceName, $ServiceVersion)
         $this.LogFilePath        = $LogFilePath
         $this.FileLoggingEnabled = $true
-        $this.MaxFileSizeBytes   = 10MB
-        $this.TraceId            = [System.Guid]::NewGuid().ToString('N')
-        $this.SpanId             = [System.Guid]::NewGuid().ToString('N').Substring(0, 16)
     }
 
     # Builds an OTel-compatible JSON log record (NDJSON / JSON Lines format).
@@ -54,9 +58,14 @@ class PSGLogger
     }
 
     # Rotates the log file when it exceeds MaxFileSizeBytes.
+    # Checks are throttled to every RotationCheckInterval writes to reduce filesystem overhead.
     hidden [void] RotateIfNeeded()
     {
         if (-not $this.FileLoggingEnabled) { return }
+
+        $this.WriteCount++
+        if ($this.WriteCount % $this.RotationCheckInterval -ne 0) { return }
+
         if (-not (Test-Path -Path $this.LogFilePath)) { return }
 
         if ((Get-Item -Path $this.LogFilePath).Length -ge $this.MaxFileSizeBytes)
