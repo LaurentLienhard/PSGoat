@@ -22,6 +22,12 @@ Describe 'Get-PSGDnsEntry' {
                 RecordData = [PSCustomObject]@{ IPv4Address = [System.Net.IPAddress]::Parse('192.168.1.10') }
             },
             [PSCustomObject]@{
+                HostName   = 'server01'
+                RecordType = 'A'
+                TimeStamp  = [datetime]::MinValue
+                RecordData = [PSCustomObject]@{ IPv4Address = [System.Net.IPAddress]::Parse('192.168.1.11') }
+            },
+            [PSCustomObject]@{
                 HostName   = 'workstation01'
                 RecordType = 'A'
                 TimeStamp  = [datetime]'2025-01-15 10:00:00'
@@ -87,6 +93,38 @@ Describe 'Get-PSGDnsEntry' {
         It 'Should return only dynamic entries' {
             $result = Get-PSGDnsEntry -ZoneName 'contoso.com' -Filter Dynamic
             $result | ForEach-Object { $_.IsStatic | Should -BeFalse }
+        }
+    }
+
+    Context 'When -Duplicate is specified' {
+        BeforeAll {
+            Mock -CommandName Get-DnsServerZone -MockWith { $script:mockZones } -ModuleName $script:moduleName
+            Mock -CommandName Get-DnsServerResourceRecord -MockWith { $script:mockRecords } -ModuleName $script:moduleName
+        }
+
+        It 'Should return only entries with Count greater than 1' {
+            $result = Get-PSGDnsEntry -ZoneName 'contoso.com' -Duplicate
+            $result | ForEach-Object { $_.Count | Should -BeGreaterThan 1 }
+        }
+
+        It 'Should not include non-duplicate entries' {
+            $result = Get-PSGDnsEntry -ZoneName 'contoso.com' -Duplicate
+            $result | Where-Object { $_.HostName -eq 'workstation01' } | Should -BeNullOrEmpty
+        }
+    }
+
+    Context 'When -Duplicate and -Filter Static are combined' {
+        BeforeAll {
+            Mock -CommandName Get-DnsServerZone -MockWith { $script:mockZones } -ModuleName $script:moduleName
+            Mock -CommandName Get-DnsServerResourceRecord -MockWith { $script:mockRecords } -ModuleName $script:moduleName
+        }
+
+        It 'Should return only static duplicate entries' {
+            $result = Get-PSGDnsEntry -ZoneName 'contoso.com' -Duplicate -Filter Static
+            $result | ForEach-Object {
+                $_.Count  | Should -BeGreaterThan 1
+                $_.IsStatic | Should -BeTrue
+            }
         }
     }
 

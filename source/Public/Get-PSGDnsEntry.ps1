@@ -2,15 +2,16 @@ function Get-PSGDnsEntry
 {
     <#
       .SYNOPSIS
-        Returns DNS resource records from one or more zones, optionally filtered by entry type.
+        Returns DNS resource records from one or more zones, with optional static/dynamic and duplicate filtering.
 
       .DESCRIPTION
         Queries a DNS server and returns resource records as PSGDnsEntry objects. Each record
-        includes the hostname, zone, record type, data, whether it is static or dynamic (DDNS),
-        and its refresh timestamp. Supports local execution or remote execution from an admin
-        workstation via ComputerName and Credential. When Credential is provided, a CimSession
-        is created automatically and cleaned up after execution. Structured logging to a file
-        can be enabled via LogFilePath, producing OTel-compatible JSON Lines output.
+        includes the hostname, zone, record type, data values, whether it is static or dynamic
+        (DDNS), its refresh timestamp, and the number of data values. Supports local execution
+        or remote execution from an admin workstation via ComputerName and Credential. When
+        Credential is provided, a CimSession is created automatically and cleaned up after
+        execution. Structured logging to a file can be enabled via LogFilePath, producing
+        OTel-compatible JSON Lines output.
 
       .PARAMETER ComputerName
         The DNS server to query. Defaults to the local machine. Accepts pipeline input
@@ -30,9 +31,15 @@ function Get-PSGDnsEntry
         Accepted values: A, AAAA, CNAME, MX, PTR, SRV, TXT.
 
       .PARAMETER Filter
-        Restricts the output to Static records only, Dynamic records only, or All (default).
+        Restricts results to Static records only, Dynamic records only, or All (default).
         Static records are manually created entries with no DDNS timestamp.
         Dynamic records are registered automatically by DHCP clients via DDNS.
+        When combined with -Duplicate, the filter is applied before duplicate detection.
+
+      .PARAMETER Duplicate
+        When specified, returns only entries where the same hostname has more than one
+        record of the same type. Can be combined with -Filter to restrict the source
+        records before duplicate detection.
 
       .PARAMETER LogFilePath
         Optional path to a log file. When provided, all log entries are written in
@@ -55,14 +62,19 @@ function Get-PSGDnsEntry
         Returns only DDNS-registered records from the contoso.com zone.
 
       .EXAMPLE
-        Get-PSGDnsEntry -ComputerName 'dc01.contoso.com' -Credential (Get-Credential) -Filter Static
+        Get-PSGDnsEntry -Duplicate
 
-        Returns only static entries from dc01 using explicit credentials.
+        Returns only entries where the same hostname appears more than once with the same record type.
 
       .EXAMPLE
-        Get-PSGDnsEntry -ZoneName 'contoso.com' -LogFilePath 'C:\Logs\PSGoat.log'
+        Get-PSGDnsEntry -Duplicate -Filter Static
 
-        Returns all entries and writes structured OTel logs to the specified file.
+        Returns only duplicate entries among statically created records.
+
+      .EXAMPLE
+        Get-PSGDnsEntry -ComputerName 'dc01.contoso.com' -Credential (Get-Credential) -Duplicate
+
+        Returns all duplicate entries from dc01 using explicit credentials.
     #>
     [CmdletBinding()]
     [OutputType([PSGDnsEntry[]])]
@@ -89,6 +101,10 @@ function Get-PSGDnsEntry
         [ValidateSet('All', 'Static', 'Dynamic')]
         [string]
         $Filter = 'All',
+
+        [Parameter()]
+        [switch]
+        $Duplicate,
 
         [Parameter()]
         [string]
@@ -129,10 +145,10 @@ function Get-PSGDnsEntry
             foreach ($zone in $zones)
             {
                 $logger.Info(
-                    ('Processing zone: {0} (filter: {1})' -f $zone, $Filter),
-                    @{ 'dns.zone' = $zone; 'computer.name' = $ComputerName; 'dns.filter' = $Filter }
+                    ('Processing zone: {0} (filter: {1}, duplicates: {2})' -f $zone, $Filter, $Duplicate.IsPresent),
+                    @{ 'dns.zone' = $zone; 'computer.name' = $ComputerName; 'dns.filter' = $Filter; 'dns.duplicate' = $Duplicate.IsPresent }
                 )
-                [PSGDnsEntry]::GetEntries($ComputerName, $zone, $RecordType, $Filter, $cimSession)
+                [PSGDnsEntry]::GetEntries($ComputerName, $zone, $RecordType, $Filter, $Duplicate.IsPresent, $cimSession)
             }
         }
         catch

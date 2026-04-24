@@ -18,8 +18,7 @@ Install-Module -Name PSGoat
 
 | Function | Synopsis |
 |----------|----------|
-| `Get-PSGDnsDuplicateEntry` | Returns all duplicate DNS entries (same hostname, multiple records) from one or more DNS zones. Supports local and remote execution via `ComputerName`. |
-| `Get-PSGDnsEntry` | Returns DNS resource records from one or more zones. Accepts a `-Filter` parameter (`All`, `Static`, `Dynamic`) to restrict results to manually created or DDNS-registered entries. Supports local and remote execution via `ComputerName`. |
+| `Get-PSGDnsEntry` | Returns DNS resource records from one or more zones. Accepts a `-Filter` parameter (`All`, `Static`, `Dynamic`) to restrict results to manually created or DDNS-registered entries, and a `-Duplicate` switch to return only entries where the same hostname has more than one record of the same type. Supports local and remote execution via `ComputerName`. |
 
 ## Build
 

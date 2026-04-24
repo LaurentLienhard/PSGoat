@@ -3,7 +3,8 @@ class PSGDnsEntry : PSGDnsBase
     [string]$HostName
     [string]$ZoneName
     [string]$RecordType
-    [string]$RecordData
+    [string[]]$RecordData
+    [int]$Count
     [bool]$IsStatic
     [datetime]$TimeStamp
 
@@ -11,12 +12,13 @@ class PSGDnsEntry : PSGDnsBase
     {
     }
 
-    PSGDnsEntry([string]$HostName, [string]$ZoneName, [string]$RecordType, [string]$RecordData, [bool]$IsStatic, [datetime]$TimeStamp)
+    PSGDnsEntry([string]$HostName, [string]$ZoneName, [string]$RecordType, [string[]]$RecordData, [bool]$IsStatic, [datetime]$TimeStamp)
     {
         $this.HostName   = $HostName
         $this.ZoneName   = $ZoneName
         $this.RecordType = $RecordType
         $this.RecordData = $RecordData
+        $this.Count      = $RecordData.Count
         $this.IsStatic   = $IsStatic
         $this.TimeStamp  = $TimeStamp
     }
@@ -27,9 +29,9 @@ class PSGDnsEntry : PSGDnsBase
         return ($null -eq $Record.TimeStamp) -or ($Record.TimeStamp -eq [datetime]::MinValue)
     }
 
-    # Queries a DNS zone and returns PSGDnsEntry objects, optionally filtered by Static or Dynamic.
-    # Pass $null for CimSession when no credentials are required.
-    static [PSGDnsEntry[]] GetEntries([string]$ComputerName, [string]$ZoneName, [string[]]$RecordType, [string]$Filter, [object]$CimSession)
+    # Queries a DNS zone and returns PSGDnsEntry objects.
+    # Filter restricts to Static or Dynamic records. DuplicatesOnly collapses groups with more than one record.
+    static [PSGDnsEntry[]] GetEntries([string]$ComputerName, [string]$ZoneName, [string[]]$RecordType, [string]$Filter, [bool]$DuplicatesOnly, [object]$CimSession)
     {
         $allRecords = [System.Collections.Generic.List[object]]::new()
 
@@ -50,27 +52,67 @@ class PSGDnsEntry : PSGDnsBase
             }
         }
 
-        $results = [System.Collections.Generic.List[PSGDnsEntry]]::new()
+        $filteredRecords = [System.Collections.Generic.List[object]]::new()
 
         foreach ($record in $allRecords)
         {
             $isStatic = [PSGDnsEntry]::IsStaticRecord($record)
+            if ($Filter -eq 'Static'  -and -not $isStatic) { continue }
+            if ($Filter -eq 'Dynamic' -and $isStatic)      { continue }
+            $filteredRecords.Add($record)
+        }
 
-            if ($Filter -eq 'Static' -and -not $isStatic) { continue }
-            if ($Filter -eq 'Dynamic' -and $isStatic) { continue }
+        $results = [System.Collections.Generic.List[PSGDnsEntry]]::new()
 
-            $ts = if ($null -eq $record.TimeStamp) { [datetime]::MinValue } else { $record.TimeStamp }
+        if ($DuplicatesOnly)
+        {
+            $filteredRecords |
+                Group-Object -Property HostName, RecordType |
+                Where-Object -FilterScript { $_.Count -gt 1 } |
+                ForEach-Object -Process {
+                    $group    = $_
+                    $allStatic = -not ($group.Group | Where-Object -FilterScript { -not [PSGDnsEntry]::IsStaticRecord($_) })
 
-            $results.Add(
-                [PSGDnsEntry]::new(
+                    $ts = if ($allStatic)
+                    {
+                        [datetime]::MinValue
+                    }
+                    else
+                    {
+                        ($group.Group |
+                            Where-Object -FilterScript { -not [PSGDnsEntry]::IsStaticRecord($_) } |
+                            Sort-Object -Property TimeStamp -Descending |
+                            Select-Object -First 1).TimeStamp
+                    }
+
+                    $data = $group.Group | ForEach-Object -Process { [PSGDnsBase]::ExtractRecordData($_) }
+
+                    $results.Add([PSGDnsEntry]::new(
+                        $group.Group[0].HostName,
+                        $ZoneName,
+                        $group.Group[0].RecordType,
+                        $data,
+                        $allStatic,
+                        $ts
+                    ))
+                }
+        }
+        else
+        {
+            foreach ($record in $filteredRecords)
+            {
+                $isStatic = [PSGDnsEntry]::IsStaticRecord($record)
+                $ts       = if ($null -eq $record.TimeStamp) { [datetime]::MinValue } else { $record.TimeStamp }
+
+                $results.Add([PSGDnsEntry]::new(
                     $record.HostName,
                     $ZoneName,
                     $record.RecordType,
-                    [PSGDnsBase]::ExtractRecordData($record),
+                    @([PSGDnsBase]::ExtractRecordData($record)),
                     $isStatic,
                     $ts
-                )
-            )
+                ))
+            }
         }
 
         return $results.ToArray()
@@ -79,6 +121,15 @@ class PSGDnsEntry : PSGDnsBase
     [string] ToString()
     {
         $entryType = if ($this.IsStatic) { 'Static' } else { 'Dynamic' }
-        return '[{0}] [{1}] {2}.{3} = {4}' -f $this.RecordType, $entryType, $this.HostName, $this.ZoneName, $this.RecordData
+
+        if ($this.Count -gt 1)
+        {
+            return '[{0}] [{1}] {2}.{3} - {4} records: {5}' -f
+                $this.RecordType, $entryType, $this.HostName, $this.ZoneName,
+                $this.Count, ($this.RecordData -join ', ')
+        }
+
+        return '[{0}] [{1}] {2}.{3} = {4}' -f
+            $this.RecordType, $entryType, $this.HostName, $this.ZoneName, $this.RecordData[0]
     }
 }
