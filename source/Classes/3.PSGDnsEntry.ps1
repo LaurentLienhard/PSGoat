@@ -50,9 +50,9 @@ class PSGDnsEntry : PSGDnsBase
 
         foreach ($record in $allRecords)
         {
-            $isStatic = [PSGDnsBase]::IsStaticRecord($record)
-            if ($Filter -eq 'Static'  -and -not $isStatic) { continue }
-            if ($Filter -eq 'Dynamic' -and $isStatic)      { continue }
+            $recordIsStatic = [PSGDnsBase]::IsStaticRecord($record)
+            if ($Filter -eq 'Static'  -and -not $recordIsStatic) { continue }
+            if ($Filter -eq 'Dynamic' -and $recordIsStatic)      { continue }
             $filteredRecords.Add($record)
         }
 
@@ -95,7 +95,7 @@ class PSGDnsEntry : PSGDnsBase
         {
             foreach ($record in $filteredRecords)
             {
-                $isStatic = [PSGDnsBase]::IsStaticRecord($record)
+                $recordIsStatic = [PSGDnsBase]::IsStaticRecord($record)
                 $ts       = if ($null -eq $record.TimeStamp) { [datetime]::MinValue } else { $record.TimeStamp }
 
                 $results.Add([PSGDnsEntry]::new(
@@ -103,7 +103,7 @@ class PSGDnsEntry : PSGDnsBase
                     $ZoneName,
                     $record.RecordType,
                     @([PSGDnsBase]::ExtractRecordData($record)),
-                    $isStatic,
+                    $recordIsStatic,
                     $ts
                 ))
             }
