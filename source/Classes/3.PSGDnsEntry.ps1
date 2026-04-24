@@ -23,12 +23,6 @@ class PSGDnsEntry : PSGDnsBase
         $this.TimeStamp  = $TimeStamp
     }
 
-    # Returns $true when the record has no DDNS timestamp (i.e. manually created).
-    static [bool] IsStaticRecord([object]$Record)
-    {
-        return ($null -eq $Record.TimeStamp) -or ($Record.TimeStamp -eq [datetime]::MinValue)
-    }
-
     # Queries a DNS zone and returns PSGDnsEntry objects.
     # Filter restricts to Static or Dynamic records. DuplicatesOnly collapses groups with more than one record.
     static [PSGDnsEntry[]] GetEntries([string]$ComputerName, [string]$ZoneName, [string[]]$RecordType, [string]$Filter, [bool]$DuplicatesOnly, [object]$CimSession)
@@ -56,7 +50,7 @@ class PSGDnsEntry : PSGDnsBase
 
         foreach ($record in $allRecords)
         {
-            $isStatic = [PSGDnsEntry]::IsStaticRecord($record)
+            $isStatic = [PSGDnsBase]::IsStaticRecord($record)
             if ($Filter -eq 'Static'  -and -not $isStatic) { continue }
             if ($Filter -eq 'Dynamic' -and $isStatic)      { continue }
             $filteredRecords.Add($record)
@@ -71,7 +65,7 @@ class PSGDnsEntry : PSGDnsBase
                 Where-Object -FilterScript { $_.Count -gt 1 } |
                 ForEach-Object -Process {
                     $group    = $_
-                    $allStatic = -not ($group.Group | Where-Object -FilterScript { -not [PSGDnsEntry]::IsStaticRecord($_) })
+                    $allStatic = -not ($group.Group | Where-Object -FilterScript { -not [PSGDnsBase]::IsStaticRecord($_) })
 
                     $ts = if ($allStatic)
                     {
@@ -80,7 +74,7 @@ class PSGDnsEntry : PSGDnsBase
                     else
                     {
                         ($group.Group |
-                            Where-Object -FilterScript { -not [PSGDnsEntry]::IsStaticRecord($_) } |
+                            Where-Object -FilterScript { -not [PSGDnsBase]::IsStaticRecord($_) } |
                             Sort-Object -Property TimeStamp -Descending |
                             Select-Object -First 1).TimeStamp
                     }
@@ -101,7 +95,7 @@ class PSGDnsEntry : PSGDnsBase
         {
             foreach ($record in $filteredRecords)
             {
-                $isStatic = [PSGDnsEntry]::IsStaticRecord($record)
+                $isStatic = [PSGDnsBase]::IsStaticRecord($record)
                 $ts       = if ($null -eq $record.TimeStamp) { [datetime]::MinValue } else { $record.TimeStamp }
 
                 $results.Add([PSGDnsEntry]::new(

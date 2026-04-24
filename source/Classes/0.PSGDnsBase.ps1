@@ -39,6 +39,12 @@ class PSGDnsBase
         )
     }
 
+    # Returns $true when the record has no DDNS timestamp (i.e. manually created).
+    static [bool] IsStaticRecord([object]$Record)
+    {
+        return ($null -eq $Record.TimeStamp) -or ($Record.TimeStamp -eq [datetime]::MinValue)
+    }
+
     # Extracts the data string from a DNS resource record based on its type.
     static [string] ExtractRecordData([object]$Record)
     {
