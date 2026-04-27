@@ -26,6 +26,7 @@ Install-Module -Name PSGoat
 | [`Get-PSGDnsDuplicateIp`](#get-psgdnsduplicateip) | Returns IP addresses shared by more than one hostname across the managed zones. |
 | [`Get-PSGDnsCnameChain`](#get-psgdnscnamechain) | Detects long CNAME chains and circular CNAME references. |
 | [`Get-PSGDnsZoneStat`](#get-psgdnszonestat) | Returns per-zone statistics: record counts by type, static/dynamic split, stale count. |
+| [`Get-PSGDnsForwardReverseMismatch`](#get-psgdnsforwardreversemismatch) | Detects A records whose PTR record exists but points to a different FQDN. |
 
 ---
 
@@ -132,6 +133,25 @@ Get-PSGDnsZoneStat | Format-Table ZoneName, TotalRecords, StaticCount, DynamicCo
 
 # Breakdown by record type for a specific zone
 (Get-PSGDnsZoneStat -ZoneName 'contoso.com').ByType
+```
+
+---
+
+### Get-PSGDnsForwardReverseMismatch
+
+Detects A records where a PTR record exists for the same IP but points to a different FQDN. Records without any PTR are intentionally skipped — use `Get-PSGDnsOrphanEntry` for those.
+
+Typical causes: server renames, IP reassignments, or incomplete migrations where the reverse zone was not updated.
+
+```powershell
+# All forward/reverse mismatches across every primary zone
+Get-PSGDnsForwardReverseMismatch
+
+# Restricted to one forward zone
+Get-PSGDnsForwardReverseMismatch -ZoneName 'contoso.com'
+
+# Remote execution with credentials
+Get-PSGDnsForwardReverseMismatch -ComputerName 'dc01.contoso.com' -Credential (Get-Credential)
 ```
 
 ---

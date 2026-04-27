@@ -94,6 +94,104 @@ class PSGDnsBase
     }
 }
 #EndRegion './Classes/0.PSGDnsBase.ps1' 94
+#Region './Classes/10.PSGDnsForwardReverseMismatch.ps1' -1
+
+class PSGDnsForwardReverseMismatch : PSGDnsBase
+{
+    [string]$ForwardFQDN
+    [string]$IPAddress
+    [string]$ReverseFQDN
+
+    PSGDnsForwardReverseMismatch()
+    {
+    }
+
+    PSGDnsForwardReverseMismatch([string]$ForwardFQDN, [string]$IPAddress, [string]$ReverseFQDN)
+    {
+        $this.ForwardFQDN = $ForwardFQDN
+        $this.IPAddress   = $IPAddress
+        $this.ReverseFQDN = $ReverseFQDN
+    }
+
+    # Finds A records whose PTR record exists but points to a different FQDN.
+    # Records with no PTR at all are intentionally ignored (use Get-PSGDnsOrphanEntry for that).
+    static [PSGDnsForwardReverseMismatch[]] FindMismatches(
+        [string]$ComputerName,
+        [string[]]$ForwardZones,
+        [string[]]$ReverseZones,
+        [object]$CimSession
+    )
+    {
+        $params  = if ($null -ne $CimSession) { @{ CimSession = $CimSession } } else { @{ ComputerName = $ComputerName } }
+        $results = [System.Collections.Generic.List[PSGDnsForwardReverseMismatch]]::new()
+
+        $forwardByIp = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.List[string]]]::new()
+
+        foreach ($zone in $ForwardZones)
+        {
+            $aRecords = Get-DnsServerResourceRecord @params -ZoneName $zone -RRType A -ErrorAction SilentlyContinue
+            Write-Verbose ('[ForwardReverse] [{0}] {1} A record(s) collected' -f $zone, @($aRecords).Count)
+
+            foreach ($record in $aRecords)
+            {
+                $fqdn = ($record.HostName -eq '@') ? $zone : ('{0}.{1}' -f $record.HostName, $zone)
+                $ip   = $record.RecordData.IPv4Address.IPAddressToString
+
+                if (-not $forwardByIp.ContainsKey($ip))
+                {
+                    $forwardByIp[$ip] = [System.Collections.Generic.List[string]]::new()
+                }
+                $forwardByIp[$ip].Add($fqdn)
+            }
+        }
+
+        Write-Verbose ('[ForwardReverse] {0} unique IP(s) from {1} forward zone(s)' -f $forwardByIp.Count, $ForwardZones.Count)
+
+        $reverseMap = [System.Collections.Generic.Dictionary[string, string]]::new()
+
+        foreach ($zone in $ReverseZones)
+        {
+            $ptrRecords = Get-DnsServerResourceRecord @params -ZoneName $zone -RRType PTR -ErrorAction SilentlyContinue
+            Write-Verbose ('[ForwardReverse] [{0}] {1} PTR record(s) collected' -f $zone, @($ptrRecords).Count)
+
+            foreach ($record in $ptrRecords)
+            {
+                $ip     = [PSGDnsBase]::ComputeIpFromPtr($record.HostName, $zone)
+                $target = $record.RecordData.PtrDomainName.TrimEnd('.')
+                $reverseMap[$ip] = $target
+            }
+        }
+
+        Write-Verbose ('[ForwardReverse] {0} PTR record(s) from {1} reverse zone(s)' -f $reverseMap.Count, $ReverseZones.Count)
+
+        foreach ($entry in $forwardByIp.GetEnumerator())
+        {
+            $ip = $entry.Key
+
+            if (-not $reverseMap.ContainsKey($ip)) { continue }
+
+            $ptrTarget = $reverseMap[$ip]
+
+            foreach ($fqdn in $entry.Value)
+            {
+                if ($fqdn -ne $ptrTarget)
+                {
+                    Write-Verbose ('[ForwardReverse] Mismatch -- A:{0}->{1} but PTR:{1}->{2}' -f $fqdn, $ip, $ptrTarget)
+                    $results.Add([PSGDnsForwardReverseMismatch]::new($fqdn, $ip, $ptrTarget))
+                }
+            }
+        }
+
+        Write-Verbose ('Scan complete -- {0} mismatch(es) found' -f $results.Count)
+        return $results.ToArray()
+    }
+
+    [string] ToString()
+    {
+        return '[ForwardReverse] A:{0}->{1} -- PTR:{1}->{2}' -f $this.ForwardFQDN, $this.IPAddress, $this.ReverseFQDN
+    }
+}
+#EndRegion './Classes/10.PSGDnsForwardReverseMismatch.ps1' 96
 #Region './Classes/2.PSGLogger.ps1' -1
 
 class PSGLogger
@@ -1423,6 +1521,151 @@ function Get-PSGDnsEntry
     }
 }
 #EndRegion './Public/Get-PSGDnsEntry.ps1' 167
+#Region './Public/Get-PSGDnsForwardReverseMismatch.ps1' -1
+
+function Get-PSGDnsForwardReverseMismatch
+{
+    <#
+      .SYNOPSIS
+        Returns A records whose corresponding PTR record exists but points to a different FQDN.
+
+      .DESCRIPTION
+        Queries a DNS server and cross-references forward zones (A records) with reverse zones
+        (PTR records). For each A record where a PTR exists for the same IP, this function checks
+        whether the PTR target matches the A record hostname. Records where no PTR exists at all
+        are intentionally skipped -- use Get-PSGDnsOrphanEntry to detect those.
+
+        This is useful for detecting stale or inconsistent reverse DNS entries left behind after
+        server renames, IP reassignments, or incomplete migrations.
+
+        Reverse zones are always discovered automatically. The -ZoneName parameter restricts which
+        forward zones are inspected; if omitted, all primary non-auto-created forward zones are used.
+        Supports local execution or remote execution via ComputerName and Credential. When Credential
+        is provided, a CimSession is created automatically and cleaned up after execution. Structured
+        logging can be enabled via LogFilePath, producing OTel-compatible JSON Lines output.
+
+      .PARAMETER ComputerName
+        The DNS server to query. Defaults to the local machine. Accepts pipeline input
+        to query multiple servers sequentially.
+
+      .PARAMETER Credential
+        Credentials to use when connecting to a remote DNS server. When provided, a
+        CimSession is created automatically.
+
+      .PARAMETER ZoneName
+        One or more forward DNS zone names to inspect. If omitted, all primary
+        non-auto-created forward zones are used. Reverse zones are always discovered
+        automatically regardless of this parameter.
+
+      .PARAMETER LogFilePath
+        Optional path to a log file. When provided, all log entries are written in
+        OTel-compatible JSON Lines format. The file is rotated automatically when it
+        exceeds 10 MB.
+
+      .EXAMPLE
+        Get-PSGDnsForwardReverseMismatch
+
+        Returns all forward/reverse mismatches across every primary zone on the local DNS server.
+
+      .EXAMPLE
+        Get-PSGDnsForwardReverseMismatch -ZoneName 'contoso.com'
+
+        Returns mismatches restricted to the contoso.com forward zone.
+
+      .EXAMPLE
+        Get-PSGDnsForwardReverseMismatch -ComputerName 'dc01.contoso.com' -Credential (Get-Credential)
+
+        Returns mismatches from dc01 using explicit credentials.
+
+      .EXAMPLE
+        'dc01.contoso.com', 'dc02.contoso.com' | Get-PSGDnsForwardReverseMismatch
+
+        Returns mismatches from two DNS servers sequentially.
+    #>
+    [CmdletBinding()]
+    [OutputType([PSGDnsForwardReverseMismatch[]])]
+    param
+    (
+        [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
+        [string]
+        $ComputerName = $env:COMPUTERNAME,
+
+        [Parameter()]
+        [PSCredential]
+        $Credential,
+
+        [Parameter()]
+        [string[]]
+        $ZoneName,
+
+        [Parameter()]
+        [string]
+        $LogFilePath
+    )
+
+    process
+    {
+        $moduleVersion = if ($MyInvocation.MyCommand.Module) { $MyInvocation.MyCommand.Module.Version.ToString() } else { '0.0.0' }
+
+        if ($PSBoundParameters.ContainsKey('LogFilePath'))
+        {
+            $logger = [PSGLogger]::new('PSGoat', $moduleVersion, $LogFilePath)
+        }
+        else
+        {
+            $logger = [PSGLogger]::new('PSGoat', $moduleVersion)
+        }
+
+        $cimSession = $null
+
+        try
+        {
+            if ($PSBoundParameters.ContainsKey('Credential'))
+            {
+                $logger.Info(('Creating CimSession on {0}' -f $ComputerName), @{ 'computer.name' = $ComputerName })
+                $cimSession = [PSGDnsForwardReverseMismatch]::NewSession($ComputerName, $Credential)
+            }
+
+            $logger.Info(('Retrieving DNS zones from {0}' -f $ComputerName), @{ 'computer.name' = $ComputerName })
+            $allZones = [PSGDnsForwardReverseMismatch]::GetZones($ComputerName, $cimSession)
+
+            $reverseZones = @($allZones | Where-Object -FilterScript { $_ -match '\.in-addr\.arpa$|\.ip6\.arpa$' })
+            $forwardZones = @($allZones | Where-Object -FilterScript { $_ -notmatch '\.in-addr\.arpa$|\.ip6\.arpa$' })
+
+            if ($PSBoundParameters.ContainsKey('ZoneName'))
+            {
+                $forwardZones = $ZoneName
+            }
+
+            $logger.Info(
+                ('Scanning {0} forward zone(s) and {1} reverse zone(s) on {2}' -f $forwardZones.Count, $reverseZones.Count, $ComputerName),
+                @{ 'computer.name' = $ComputerName; 'dns.forward.zone.count' = $forwardZones.Count; 'dns.reverse.zone.count' = $reverseZones.Count }
+            )
+
+            Write-Verbose ('Forward zones: {0}' -f ($forwardZones -join ', '))
+            Write-Verbose ('Reverse zones: {0}' -f ($reverseZones -join ', '))
+
+            $mismatches = [PSGDnsForwardReverseMismatch]::FindMismatches($ComputerName, $forwardZones, $reverseZones, $cimSession)
+
+            $logger.Info(
+                ('{0} forward/reverse mismatch(es) found on {1}' -f @($mismatches).Count, $ComputerName),
+                @{ 'computer.name' = $ComputerName; 'dns.mismatch.count' = @($mismatches).Count }
+            )
+
+            $mismatches
+        }
+        catch
+        {
+            $logger.Error($_.Exception.Message, @{ 'computer.name' = $ComputerName; 'error.type' = $_.Exception.GetType().Name })
+            throw
+        }
+        finally
+        {
+            [PSGDnsForwardReverseMismatch]::RemoveSession($cimSession)
+        }
+    }
+}
+#EndRegion './Public/Get-PSGDnsForwardReverseMismatch.ps1' 143
 #Region './Public/Get-PSGDnsOrphanEntry.ps1' -1
 
 function Get-PSGDnsOrphanEntry
