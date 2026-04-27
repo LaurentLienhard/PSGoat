@@ -69,7 +69,7 @@ RequiredModules = @()
 # NestedModules = @()
 
 # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
-FunctionsToExport = 'Get-PSGDnsDuplicateEntry'
+FunctionsToExport = 'Get-PSGDnsEntry'
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = @()
@@ -104,7 +104,7 @@ PrivateData = @{
         # IconUri = ''
 
         # ReleaseNotes of this module
-        ReleaseNotes = '## [0.0.1] - 2026-04-23
+        ReleaseNotes = '## [0.0.1] - 2026-04-27
 
 ### Added
 
