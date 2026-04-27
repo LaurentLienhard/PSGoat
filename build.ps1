@@ -538,6 +538,20 @@ begin
 
         Pop-Location -StackName 'BuildModule'
 
+        if ($Tasks -contains 'build')
+        {
+            $builtManifest = Get-ChildItem -Path (Join-Path $OutputDirectory 'module' 'PSGoat') -Filter 'PSGoat.psd1' -Recurse -ErrorAction SilentlyContinue |
+                Select-Object -First 1
+
+            if ($builtManifest)
+            {
+                Write-Host -Object "[build] Importing built module from $($builtManifest.FullName)" -ForegroundColor Cyan
+                Get-Module -Name 'PSGoat' -All | Remove-Module -Force -ErrorAction SilentlyContinue
+                Import-Module -Name $builtManifest.FullName -Force
+                Write-Host -Object "[build] Module 'PSGoat' imported successfully." -ForegroundColor Green
+            }
+        }
+
         return
     }
 }
