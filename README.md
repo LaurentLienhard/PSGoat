@@ -136,6 +136,58 @@ Get-PSGDnsStaleEntry -ComputerName 'dc01.contoso.com' -Credential (Get-Credentia
 
 ---
 
+### `Get-PSGDnsDuplicateIp`
+
+Returns IP addresses shared by more than one hostname across the managed DNS zones. Useful for detecting incomplete migrations or IP address conflicts.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ComputerName` | `string` | local machine | DNS server to query. Accepts pipeline input. |
+| `Credential` | `PSCredential` | — | Credentials for remote connection. Creates a CimSession automatically. |
+| `ZoneName` | `string[]` | all primary zones | Zones to inspect. Auto-discovered when omitted. |
+| `LogFilePath` | `string` | — | Write OTel-compatible JSON Lines logs to this file (rotated at 10 MB). |
+
+```powershell
+# Duplicate IPs across all zones
+Get-PSGDnsDuplicateIp
+
+# Restricted to specific zones
+Get-PSGDnsDuplicateIp -ZoneName 'contoso.com', 'fabrikam.com'
+
+# Remote execution
+Get-PSGDnsDuplicateIp -ComputerName 'dc01.contoso.com' -Credential (Get-Credential)
+```
+
+---
+
+### `Get-PSGDnsCnameChain`
+
+Returns CNAME chains with a depth equal to or greater than `MinDepth`, and all circular CNAME references regardless of depth. Depth is the number of CNAME hops: a single alias pointing directly to a final record has a depth of 1 (normal); two or more hops before reaching a final record may indicate a misconfiguration.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ComputerName` | `string` | local machine | DNS server to query. Accepts pipeline input. |
+| `Credential` | `PSCredential` | — | Credentials for remote connection. Creates a CimSession automatically. |
+| `ZoneName` | `string[]` | all primary zones | Zones to inspect. Auto-discovered when omitted. |
+| `MinDepth` | `int` | `2` | Minimum number of CNAME hops to report. Must be ≥ 1. Circular chains are always reported. |
+| `LogFilePath` | `string` | — | Write OTel-compatible JSON Lines logs to this file (rotated at 10 MB). |
+
+```powershell
+# CNAME chains with 2 or more hops, and all circular references
+Get-PSGDnsCnameChain
+
+# Only chains with 3 or more hops
+Get-PSGDnsCnameChain -MinDepth 3
+
+# Restricted to one zone
+Get-PSGDnsCnameChain -ZoneName 'contoso.com'
+
+# Remote execution
+Get-PSGDnsCnameChain -ComputerName 'dc01.contoso.com' -Credential (Get-Credential)
+```
+
+---
+
 ## Build
 
 Resolve dependencies (first time only, or after updating `RequiredModules.psd1`):
