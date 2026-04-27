@@ -28,9 +28,12 @@ class PSGDnsOrphanEntry : PSGDnsBase
 
         if ($OrphanType -eq 'All' -or $OrphanType -eq 'MissingPTR')
         {
+            Write-Verbose ('[MissingPTR] Starting scan — {0} forward zone(s)' -f $ForwardZones.Count)
+
             foreach ($zone in $ForwardZones)
             {
                 $aRecords = Get-DnsServerResourceRecord @params -ZoneName $zone -RRType A -ErrorAction SilentlyContinue
+                Write-Verbose ('[MissingPTR] [{0}] {1} A record(s) to check' -f $zone, @($aRecords).Count)
 
                 foreach ($record in $aRecords)
                 {
@@ -38,14 +41,23 @@ class PSGDnsOrphanEntry : PSGDnsBase
                     $ptrFullName = [PSGDnsBase]::ComputePtrName($ip)
                     $reverseZone = [PSGDnsBase]::FindMatchingZone($ptrFullName, $ReverseZones)
 
-                    if ([string]::IsNullOrEmpty($reverseZone)) { continue }
+                    if ([string]::IsNullOrEmpty($reverseZone))
+                    {
+                        Write-Verbose ('[MissingPTR] [{0}] {1} ({2}) — no reverse zone, skipped' -f $zone, $record.HostName, $ip)
+                        continue
+                    }
 
-                    $ptrHostPart  = $ptrFullName -replace ('\.' + [regex]::Escape($reverseZone) + '$'), ''
-                    $existingPtr  = Get-DnsServerResourceRecord @params -ZoneName $reverseZone -Name $ptrHostPart -RRType PTR -ErrorAction SilentlyContinue
+                    $ptrHostPart = $ptrFullName -replace ('\.' + [regex]::Escape($reverseZone) + '$'), ''
+                    $existingPtr = Get-DnsServerResourceRecord @params -ZoneName $reverseZone -Name $ptrHostPart -RRType PTR -ErrorAction SilentlyContinue
 
                     if (-not $existingPtr)
                     {
+                        Write-Verbose ('[MissingPTR] [{0}] {1} ({2}) — no PTR in {3} [ORPHAN]' -f $zone, $record.HostName, $ip, $reverseZone)
                         $results.Add([PSGDnsOrphanEntry]::new($record.HostName, $zone, $ip, 'MissingPTR'))
+                    }
+                    else
+                    {
+                        Write-Verbose ('[MissingPTR] [{0}] {1} ({2}) — PTR found in {3}, ok' -f $zone, $record.HostName, $ip, $reverseZone)
                     }
                 }
             }
@@ -53,29 +65,42 @@ class PSGDnsOrphanEntry : PSGDnsBase
 
         if ($OrphanType -eq 'All' -or $OrphanType -eq 'MissingA')
         {
+            Write-Verbose ('[MissingA] Starting scan — {0} reverse zone(s)' -f $ReverseZones.Count)
+
             foreach ($zone in $ReverseZones)
             {
                 $ptrRecords = Get-DnsServerResourceRecord @params -ZoneName $zone -RRType PTR -ErrorAction SilentlyContinue
+                Write-Verbose ('[MissingA] [{0}] {1} PTR record(s) to check' -f $zone, @($ptrRecords).Count)
 
                 foreach ($record in $ptrRecords)
                 {
-                    $target      = $record.RecordData.PtrDomainName.TrimEnd('.')
-                    $targetZone  = [PSGDnsBase]::FindMatchingZone($target, $ForwardZones)
+                    $target     = $record.RecordData.PtrDomainName.TrimEnd('.')
+                    $targetZone = [PSGDnsBase]::FindMatchingZone($target, $ForwardZones)
 
-                    if ([string]::IsNullOrEmpty($targetZone)) { continue }
+                    if ([string]::IsNullOrEmpty($targetZone))
+                    {
+                        Write-Verbose ('[MissingA] [{0}] {1} — external target, skipped' -f $zone, $target)
+                        continue
+                    }
 
-                    $hostPart    = $target -replace ('\.' + [regex]::Escape($targetZone) + '$'), ''
-                    $existingA   = Get-DnsServerResourceRecord @params -ZoneName $targetZone -Name $hostPart -RRType A -ErrorAction SilentlyContinue
+                    $hostPart  = $target -replace ('\.' + [regex]::Escape($targetZone) + '$'), ''
+                    $existingA = Get-DnsServerResourceRecord @params -ZoneName $targetZone -Name $hostPart -RRType A -ErrorAction SilentlyContinue
 
                     if (-not $existingA)
                     {
                         $ip = [PSGDnsBase]::ComputeIpFromPtr($record.HostName, $zone)
+                        Write-Verbose ('[MissingA] [{0}] {1} ({2}) — no A in {3} [ORPHAN]' -f $zone, $target, $ip, $targetZone)
                         $results.Add([PSGDnsOrphanEntry]::new($target, $zone, $ip, 'MissingA'))
+                    }
+                    else
+                    {
+                        Write-Verbose ('[MissingA] [{0}] {1} — A found in {2}, ok' -f $zone, $target, $targetZone)
                     }
                 }
             }
         }
 
+        Write-Verbose ('Scan complete — {0} orphaned record(s) found' -f $results.Count)
         return $results.ToArray()
     }
 

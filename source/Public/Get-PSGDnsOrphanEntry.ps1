@@ -126,7 +126,17 @@ function Get-PSGDnsOrphanEntry
                 @{ 'computer.name' = $ComputerName; 'dns.forward.count' = $forwardZones.Count; 'dns.reverse.count' = $reverseZones.Count; 'dns.orphan.type' = $OrphanType }
             )
 
-            [PSGDnsOrphanEntry]::FindOrphans($ComputerName, $forwardZones, $reverseZones, $OrphanType, $cimSession)
+            Write-Verbose ('Forward zones: {0}' -f ($forwardZones -join ', '))
+            Write-Verbose ('Reverse zones: {0}' -f ($reverseZones -join ', '))
+
+            $orphans = [PSGDnsOrphanEntry]::FindOrphans($ComputerName, $forwardZones, $reverseZones, $OrphanType, $cimSession)
+
+            $logger.Info(
+                ('{0} orphaned record(s) found on {1}' -f @($orphans).Count, $ComputerName),
+                @{ 'computer.name' = $ComputerName; 'dns.orphan.count' = @($orphans).Count; 'dns.orphan.type' = $OrphanType }
+            )
+
+            $orphans
         }
         catch
         {
