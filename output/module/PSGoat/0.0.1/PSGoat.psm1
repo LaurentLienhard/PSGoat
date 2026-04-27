@@ -1,26 +1,7 @@
-#Region '.\Classes\1.PSGDnsDuplicateEntry.ps1' -1
+#Region '.\Classes\0.PSGDnsBase.ps1' -1
 
-class PSGDnsDuplicateEntry
+class PSGDnsBase
 {
-    [string]$HostName
-    [string]$ZoneName
-    [string]$RecordType
-    [string[]]$RecordData
-    [int]$DuplicateCount
-
-    PSGDnsDuplicateEntry()
-    {
-    }
-
-    PSGDnsDuplicateEntry([string]$HostName, [string]$ZoneName, [string]$RecordType, [string[]]$RecordData)
-    {
-        $this.HostName       = $HostName
-        $this.ZoneName       = $ZoneName
-        $this.RecordType     = $RecordType
-        $this.RecordData     = $RecordData
-        $this.DuplicateCount = $RecordData.Count
-    }
-
     # Creates a CimSession for remote execution with credentials. Returns $null for local execution.
     static [object] NewSession([string]$ComputerName, [PSCredential]$Credential)
     {
@@ -29,7 +10,7 @@ class PSGDnsDuplicateEntry
             return $null
         }
 
-        return New-CimSession -ComputerName $ComputerName -Credential $Credential
+        return New-CimSession -ComputerName $ComputerName -Credential $Credential -ErrorAction Stop
     }
 
     # Removes a CimSession created by NewSession. Safe to call with $null.
@@ -42,23 +23,21 @@ class PSGDnsDuplicateEntry
     }
 
     # Returns all primary non-auto-created zone names from the target DNS server.
-    # Pass $null for CimSession when no credentials are required.
     static [string[]] GetZones([string]$ComputerName, [object]$CimSession)
     {
-        if ($null -ne $CimSession)
-        {
-            return (
-                Get-DnsServerZone -CimSession $CimSession |
-                    Where-Object -FilterScript { -not $_.IsAutoCreated -and $_.ZoneType -eq 'Primary' } |
-                    Select-Object -ExpandProperty ZoneName
-            )
-        }
+        $params = if ($null -ne $CimSession) { @{ CimSession = $CimSession } } else { @{ ComputerName = $ComputerName } }
 
         return (
-            Get-DnsServerZone -ComputerName $ComputerName |
+            Get-DnsServerZone @params |
                 Where-Object -FilterScript { -not $_.IsAutoCreated -and $_.ZoneType -eq 'Primary' } |
                 Select-Object -ExpandProperty ZoneName
         )
+    }
+
+    # Returns $true when the record has no DDNS timestamp (i.e. manually created).
+    static [bool] IsStaticRecord([object]$Record)
+    {
+        return ($null -eq $Record.TimeStamp) -or ($Record.TimeStamp -eq [datetime]::MinValue)
     }
 
     # Extracts the data string from a DNS resource record based on its type.
@@ -71,71 +50,14 @@ class PSGDnsDuplicateEntry
             'CNAME' { return $Record.RecordData.HostNameAlias }
             'MX'    { return $Record.RecordData.MailExchange }
             'PTR'   { return $Record.RecordData.PtrDomainName }
+            'SRV'   { return '{0} {1} {2} {3}' -f $Record.RecordData.Priority, $Record.RecordData.Weight, $Record.RecordData.Port, $Record.RecordData.DomainName }
             'TXT'   { return $Record.RecordData.DescriptiveText }
-            #default { return $Record.RecordData.ToString() }
         }
+
         return $Record.RecordData.ToString()
     }
-
-    # Queries a DNS zone and returns PSGDnsDuplicateEntry objects for every duplicated hostname.
-    # Pass $null for CimSession when no credentials are required.
-    static [PSGDnsDuplicateEntry[]] FindInZone([string]$ComputerName, [string]$ZoneName, [string[]]$RecordType, [object]$CimSession)
-    {
-        $allRecords = [System.Collections.Generic.List[object]]::new()
-
-        foreach ($type in $RecordType)
-        {
-            if ($null -ne $CimSession)
-            {
-                $records = Get-DnsServerResourceRecord -CimSession $CimSession -ZoneName $ZoneName -RRType $type -ErrorAction SilentlyContinue
-            }
-            else
-            {
-                $records = Get-DnsServerResourceRecord -ComputerName $ComputerName -ZoneName $ZoneName -RRType $type -ErrorAction SilentlyContinue
-            }
-
-            if ($records)
-            {
-                $allRecords.AddRange([object[]]@($records))
-            }
-        }
-
-        $results = [System.Collections.Generic.List[PSGDnsDuplicateEntry]]::new()
-
-        $allRecords |
-            Group-Object -Property HostName |
-            Where-Object -FilterScript { $_.Count -gt 1 } |
-            ForEach-Object -Process {
-                $group = $_
-
-                $recordData = $group.Group | ForEach-Object -Process {
-                    [PSGDnsDuplicateEntry]::ExtractRecordData($_)
-                }
-
-                $results.Add(
-                    [PSGDnsDuplicateEntry]::new(
-                        $group.Name,
-                        $ZoneName,
-                        ($group.Group.RecordType | Select-Object -Unique) -join '/',
-                        $recordData
-                    )
-                )
-            }
-
-        return $results.ToArray()
-    }
-
-    [string] ToString()
-    {
-        return '[{0}] {1}.{2} - {3} duplicate {4}' -f
-            $this.RecordType,
-            $this.HostName,
-            $this.ZoneName,
-            $this.DuplicateCount,
-            $(if ($this.DuplicateCount -gt 1) { 'entries' } else { 'entry' })
-    }
 }
-#EndRegion '.\Classes\1.PSGDnsDuplicateEntry.ps1' 136
+#EndRegion '.\Classes\0.PSGDnsBase.ps1' 58
 #Region '.\Classes\2.PSGLogger.ps1' -1
 
 class PSGLogger
@@ -147,28 +69,32 @@ class PSGLogger
     [string]$TraceId
     [string]$SpanId
     [long]$MaxFileSizeBytes
+    [int]$RotationCheckInterval
+    hidden [int]$WriteCount
+
+    hidden [void] Init([string]$ServiceName, [string]$ServiceVersion)
+    {
+        $this.ServiceName           = $ServiceName
+        $this.ServiceVersion        = $ServiceVersion
+        $this.FileLoggingEnabled    = $false
+        $this.MaxFileSizeBytes      = 10MB
+        $this.RotationCheckInterval = 100
+        $this.TraceId               = [System.Guid]::NewGuid().ToString('N')
+        $this.SpanId                = [System.Guid]::NewGuid().ToString('N').Substring(0, 16)
+    }
 
     # Console-only logger.
     PSGLogger([string]$ServiceName, [string]$ServiceVersion)
     {
-        $this.ServiceName        = $ServiceName
-        $this.ServiceVersion     = $ServiceVersion
-        $this.FileLoggingEnabled = $false
-        $this.MaxFileSizeBytes   = 10MB
-        $this.TraceId            = [System.Guid]::NewGuid().ToString('N')
-        $this.SpanId             = [System.Guid]::NewGuid().ToString('N').Substring(0, 16)
+        $this.Init($ServiceName, $ServiceVersion)
     }
 
     # Console + file logger.
     PSGLogger([string]$ServiceName, [string]$ServiceVersion, [string]$LogFilePath)
     {
-        $this.ServiceName        = $ServiceName
-        $this.ServiceVersion     = $ServiceVersion
+        $this.Init($ServiceName, $ServiceVersion)
         $this.LogFilePath        = $LogFilePath
         $this.FileLoggingEnabled = $true
-        $this.MaxFileSizeBytes   = 10MB
-        $this.TraceId            = [System.Guid]::NewGuid().ToString('N')
-        $this.SpanId             = [System.Guid]::NewGuid().ToString('N').Substring(0, 16)
     }
 
     # Builds an OTel-compatible JSON log record (NDJSON / JSON Lines format).
@@ -194,9 +120,14 @@ class PSGLogger
     }
 
     # Rotates the log file when it exceeds MaxFileSizeBytes.
+    # Checks are throttled to every RotationCheckInterval writes to reduce filesystem overhead.
     hidden [void] RotateIfNeeded()
     {
         if (-not $this.FileLoggingEnabled) { return }
+
+        $this.WriteCount++
+        if ($this.WriteCount % $this.RotationCheckInterval -ne 0) { return }
+
         if (-not (Test-Path -Path $this.LogFilePath)) { return }
 
         if ((Get-Item -Path $this.LogFilePath).Length -ge $this.MaxFileSizeBytes)
@@ -258,22 +189,148 @@ class PSGLogger
         $this.WriteToFile($this.BuildRecord('ERROR', 17, $Message, $Attributes))
     }
 }
-#EndRegion '.\Classes\2.PSGLogger.ps1' 121
-#Region '.\Public\Get-PSGDnsDuplicateEntry.ps1' -1
+#EndRegion '.\Classes\2.PSGLogger.ps1' 130
+#Region '.\Classes\3.PSGDnsEntry.ps1' -1
 
-function Get-PSGDnsDuplicateEntry
+class PSGDnsEntry : PSGDnsBase
+{
+    [string]$HostName
+    [string]$ZoneName
+    [string]$RecordType
+    [string[]]$RecordData
+    [int]$Count
+    [bool]$IsStatic
+    [Nullable[datetime]]$TimeStamp
+
+    PSGDnsEntry()
+    {
+    }
+
+    PSGDnsEntry([string]$HostName, [string]$ZoneName, [string]$RecordType, [string[]]$RecordData, [bool]$IsStatic, [Nullable[datetime]]$TimeStamp)
+    {
+        $this.HostName   = $HostName
+        $this.ZoneName   = $ZoneName
+        $this.RecordType = $RecordType
+        $this.RecordData = $RecordData
+        $this.Count      = $RecordData.Count
+        $this.IsStatic   = $IsStatic
+        $this.TimeStamp  = $TimeStamp
+    }
+
+    # Queries a DNS zone and returns PSGDnsEntry objects.
+    # Filter restricts to Static or Dynamic records. DuplicatesOnly collapses groups with more than one record.
+    static [PSGDnsEntry[]] GetEntries([string]$ComputerName, [string]$ZoneName, [string[]]$RecordType, [string]$Filter, [bool]$DuplicatesOnly, [object]$CimSession)
+    {
+        $params     = if ($null -ne $CimSession) { @{ CimSession = $CimSession } } else { @{ ComputerName = $ComputerName } }
+        $allRecords = [System.Collections.Generic.List[object]]::new()
+
+        foreach ($type in $RecordType)
+        {
+            $records = Get-DnsServerResourceRecord @params -ZoneName $ZoneName -RRType $type -ErrorAction SilentlyContinue
+            if ($records)
+            {
+                $allRecords.AddRange([object[]]@($records))
+            }
+        }
+
+        $filteredRecords = [System.Collections.Generic.List[object]]::new()
+
+        foreach ($record in $allRecords)
+        {
+            $recordIsStatic = [PSGDnsBase]::IsStaticRecord($record)
+            if ($Filter -eq 'Static'  -and -not $recordIsStatic) { continue }
+            if ($Filter -eq 'Dynamic' -and $recordIsStatic)      { continue }
+            $filteredRecords.Add($record)
+        }
+
+        $results = [System.Collections.Generic.List[PSGDnsEntry]]::new()
+
+        if ($DuplicatesOnly)
+        {
+            $filteredRecords |
+                Group-Object -Property HostName, RecordType |
+                Where-Object -FilterScript { $_.Count -gt 1 } |
+                ForEach-Object -Process {
+                    $group     = $_
+                    $allStatic = -not ($group.Group | Where-Object -FilterScript { -not [PSGDnsBase]::IsStaticRecord($_) })
+
+                    $ts = if ($allStatic)
+                    {
+                        $null
+                    }
+                    else
+                    {
+                        ($group.Group |
+                            Where-Object -FilterScript { -not [PSGDnsBase]::IsStaticRecord($_) } |
+                            Sort-Object -Property TimeStamp -Descending |
+                            Select-Object -First 1).TimeStamp
+                    }
+
+                    $data = $group.Group | ForEach-Object -Process { [PSGDnsBase]::ExtractRecordData($_) }
+
+                    $results.Add([PSGDnsEntry]::new(
+                        $group.Group[0].HostName,
+                        $ZoneName,
+                        $group.Group[0].RecordType,
+                        $data,
+                        $allStatic,
+                        $ts
+                    ))
+                }
+        }
+        else
+        {
+            foreach ($record in $filteredRecords)
+            {
+                $recordIsStatic = [PSGDnsBase]::IsStaticRecord($record)
+                $ts             = if ($recordIsStatic) { $null } else { $record.TimeStamp }
+
+                $results.Add([PSGDnsEntry]::new(
+                    $record.HostName,
+                    $ZoneName,
+                    $record.RecordType,
+                    @([PSGDnsBase]::ExtractRecordData($record)),
+                    $recordIsStatic,
+                    $ts
+                ))
+            }
+        }
+
+        return $results.ToArray()
+    }
+
+    [string] ToString()
+    {
+        $entryType = if ($this.IsStatic) { 'Static' } else { 'Dynamic' }
+
+        if ($this.Count -gt 1)
+        {
+            return '[{0}] [{1}] {2}.{3} - {4} records: {5}' -f
+                $this.RecordType, $entryType, $this.HostName, $this.ZoneName,
+                $this.Count, ($this.RecordData -join ', ')
+        }
+
+        return '[{0}] [{1}] {2}.{3} = {4}' -f
+            $this.RecordType, $entryType, $this.HostName, $this.ZoneName, $this.RecordData[0]
+    }
+}
+#EndRegion '.\Classes\3.PSGDnsEntry.ps1' 123
+#Region '.\Public\Get-PSGDnsEntry.ps1' -1
+
+function Get-PSGDnsEntry
 {
     <#
       .SYNOPSIS
-        Returns all duplicate DNS entries from one or more DNS zones.
+        Returns DNS resource records from one or more zones, with optional static/dynamic and duplicate filtering.
 
       .DESCRIPTION
-        Queries a DNS server for resource records and identifies entries where the same
-        hostname has more than one record of the same type. Supports local execution or
-        remote execution from an admin workstation via the ComputerName and Credential
-        parameters. When Credential is provided, a CimSession is established automatically
-        and cleaned up after execution. Structured logging to a file can be enabled via
-        LogFilePath, producing OTel-compatible JSON Lines output.
+        Queries a DNS server and returns resource records as PSGDnsEntry objects. Each record
+        includes the hostname, zone, record type, data values, whether it is static or dynamic
+        (DDNS), its refresh timestamp, and the number of data values. Supports local execution
+        or remote execution from an admin workstation via ComputerName and Credential. When
+        Credential is provided, a CimSession is created automatically and cleaned up after
+        execution. Structured logging to a file can be enabled via LogFilePath, producing
+        OTel-compatible JSON Lines output.
 
       .PARAMETER ComputerName
         The DNS server to query. Defaults to the local machine. Accepts pipeline input
@@ -289,8 +346,19 @@ function Get-PSGDnsDuplicateEntry
         zones on the target server are queried automatically.
 
       .PARAMETER RecordType
-        The DNS record types to check for duplicates. Defaults to A and AAAA.
+        The DNS record types to retrieve. Defaults to A and AAAA.
         Accepted values: A, AAAA, CNAME, MX, PTR, SRV, TXT.
+
+      .PARAMETER Filter
+        Restricts results to Static records only, Dynamic records only, or All (default).
+        Static records are manually created entries with no DDNS timestamp.
+        Dynamic records are registered automatically by DHCP clients via DDNS.
+        When combined with -Duplicate, the filter is applied before duplicate detection.
+
+      .PARAMETER Duplicate
+        When specified, returns only entries where the same hostname has more than one
+        record of the same type. Can be combined with -Filter to restrict the source
+        records before duplicate detection.
 
       .PARAMETER LogFilePath
         Optional path to a log file. When provided, all log entries are written in
@@ -298,28 +366,37 @@ function Get-PSGDnsDuplicateEntry
         rotated automatically when it exceeds 10 MB.
 
       .EXAMPLE
-        Get-PSGDnsDuplicateEntry
+        Get-PSGDnsEntry
 
-        Returns all duplicate A and AAAA records from every primary zone on the local DNS server.
-
-      .EXAMPLE
-        Get-PSGDnsDuplicateEntry -ComputerName 'dc01.contoso.com' -ZoneName 'contoso.com'
-
-        Returns all duplicate A and AAAA records from the contoso.com zone on dc01 using the current account.
+        Returns all A and AAAA records from every primary zone on the local DNS server.
 
       .EXAMPLE
-        $cred = Get-Credential
-        Get-PSGDnsDuplicateEntry -ComputerName 'dc01.contoso.com' -Credential $cred
+        Get-PSGDnsEntry -Filter Static
+
+        Returns only manually created A and AAAA records from every primary zone.
+
+      .EXAMPLE
+        Get-PSGDnsEntry -Filter Dynamic -ZoneName 'contoso.com'
+
+        Returns only DDNS-registered records from the contoso.com zone.
+
+      .EXAMPLE
+        Get-PSGDnsEntry -Duplicate
+
+        Returns only entries where the same hostname appears more than once with the same record type.
+
+      .EXAMPLE
+        Get-PSGDnsEntry -Duplicate -Filter Static
+
+        Returns only duplicate entries among statically created records.
+
+      .EXAMPLE
+        Get-PSGDnsEntry -ComputerName 'dc01.contoso.com' -Credential (Get-Credential) -Duplicate
 
         Returns all duplicate entries from dc01 using explicit credentials.
-
-      .EXAMPLE
-        Get-PSGDnsDuplicateEntry -ZoneName 'contoso.com' -LogFilePath 'C:\Logs\PSGoat.log'
-
-        Returns duplicate entries and writes structured OTel logs to the specified file.
     #>
     [CmdletBinding()]
-    [OutputType([PSGDnsDuplicateEntry[]])]
+    [OutputType([PSGDnsEntry[]])]
     param
     (
         [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
@@ -337,7 +414,16 @@ function Get-PSGDnsDuplicateEntry
         [Parameter()]
         [ValidateSet('A', 'AAAA', 'CNAME', 'MX', 'PTR', 'SRV', 'TXT')]
         [string[]]
-        $RecordType = @('A', 'AAAA'),
+        $RecordType = @('A', 'AAAA', 'CNAME', 'MX', 'PTR', 'SRV', 'TXT'),
+
+        [Parameter()]
+        [ValidateSet('All', 'Static', 'Dynamic')]
+        [string]
+        $Filter = 'All',
+
+        [Parameter()]
+        [switch]
+        $Duplicate,
 
         [Parameter()]
         [string]
@@ -346,13 +432,15 @@ function Get-PSGDnsDuplicateEntry
 
     process
     {
+        $moduleVersion = $MyInvocation.MyCommand.Module.Version.ToString()
+
         if ($PSBoundParameters.ContainsKey('LogFilePath'))
         {
-            $logger = [PSGLogger]::new('PSGoat', '0.1.0', $LogFilePath)
+            $logger = [PSGLogger]::new('PSGoat', $moduleVersion, $LogFilePath)
         }
         else
         {
-            $logger = [PSGLogger]::new('PSGoat', '0.1.0')
+            $logger = [PSGLogger]::new('PSGoat', $moduleVersion)
         }
 
         $cimSession = $null
@@ -362,7 +450,7 @@ function Get-PSGDnsDuplicateEntry
             if ($PSBoundParameters.ContainsKey('Credential'))
             {
                 $logger.Info(('Creating CimSession on {0}' -f $ComputerName), @{ 'computer.name' = $ComputerName })
-                $cimSession = [PSGDnsDuplicateEntry]::NewSession($ComputerName, $Credential)
+                $cimSession = [PSGDnsEntry]::NewSession($ComputerName, $Credential)
             }
 
             if ($PSBoundParameters.ContainsKey('ZoneName'))
@@ -372,13 +460,16 @@ function Get-PSGDnsDuplicateEntry
             else
             {
                 $logger.Info(('Retrieving DNS zones from {0}' -f $ComputerName), @{ 'computer.name' = $ComputerName })
-                $zones = [PSGDnsDuplicateEntry]::GetZones($ComputerName, $cimSession)
+                $zones = [PSGDnsEntry]::GetZones($ComputerName, $cimSession)
             }
 
             foreach ($zone in $zones)
             {
-                $logger.Info(('Processing zone: {0}' -f $zone), @{ 'dns.zone' = $zone; 'computer.name' = $ComputerName })
-                [PSGDnsDuplicateEntry]::FindInZone($ComputerName, $zone, $RecordType, $cimSession)
+                $logger.Info(
+                    ('Processing zone: {0} (filter: {1}, duplicates: {2})' -f $zone, $Filter, $Duplicate.IsPresent),
+                    @{ 'dns.zone' = $zone; 'computer.name' = $ComputerName; 'dns.filter' = $Filter; 'dns.duplicate' = $Duplicate.IsPresent }
+                )
+                [PSGDnsEntry]::GetEntries($ComputerName, $zone, $RecordType, $Filter, $Duplicate.IsPresent, $cimSession)
             }
         }
         catch
@@ -388,8 +479,8 @@ function Get-PSGDnsDuplicateEntry
         }
         finally
         {
-            [PSGDnsDuplicateEntry]::RemoveSession($cimSession)
+            [PSGDnsEntry]::RemoveSession($cimSession)
         }
     }
 }
-#EndRegion '.\Public\Get-PSGDnsDuplicateEntry.ps1' 132
+#EndRegion '.\Public\Get-PSGDnsEntry.ps1' 167
