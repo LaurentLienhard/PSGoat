@@ -74,27 +74,27 @@ class PSGDnsOrphanEntry : PSGDnsBase
 
                 foreach ($record in $ptrRecords)
                 {
-                    $target     = $record.RecordData.PtrDomainName.TrimEnd('.')
-                    $targetZone = [PSGDnsBase]::FindMatchingZone($target, $ForwardZones)
+                    $ptrTarget     = $record.RecordData.PtrDomainName.TrimEnd('.')
+                    $ptrTargetZone = [PSGDnsBase]::FindMatchingZone($ptrTarget, $ForwardZones)
 
-                    if ([string]::IsNullOrEmpty($targetZone))
+                    if ([string]::IsNullOrEmpty($ptrTargetZone))
                     {
-                        Write-Verbose ('[MissingA] [{0}] {1} — external target, skipped' -f $zone, $target)
+                        Write-Verbose ('[MissingA] [{0}] {1} — external target, skipped' -f $zone, $ptrTarget)
                         continue
                     }
 
-                    $hostPart  = $target -replace ('\.' + [regex]::Escape($targetZone) + '$'), ''
-                    $existingA = Get-DnsServerResourceRecord @params -ZoneName $targetZone -Name $hostPart -RRType A -ErrorAction SilentlyContinue
+                    $hostPart  = $ptrTarget -replace ('\.' + [regex]::Escape($ptrTargetZone) + '$'), ''
+                    $existingA = Get-DnsServerResourceRecord @params -ZoneName $ptrTargetZone -Name $hostPart -RRType A -ErrorAction SilentlyContinue
 
                     if (-not $existingA)
                     {
                         $ip = [PSGDnsBase]::ComputeIpFromPtr($record.HostName, $zone)
-                        Write-Verbose ('[MissingA] [{0}] {1} ({2}) — no A in {3} [ORPHAN]' -f $zone, $target, $ip, $targetZone)
-                        $results.Add([PSGDnsOrphanEntry]::new($target, $zone, $ip, 'MissingA'))
+                        Write-Verbose ('[MissingA] [{0}] {1} ({2}) — no A in {3} [ORPHAN]' -f $zone, $ptrTarget, $ip, $ptrTargetZone)
+                        $results.Add([PSGDnsOrphanEntry]::new($ptrTarget, $zone, $ip, 'MissingA'))
                     }
                     else
                     {
-                        Write-Verbose ('[MissingA] [{0}] {1} — A found in {2}, ok' -f $zone, $target, $targetZone)
+                        Write-Verbose ('[MissingA] [{0}] {1} — A found in {2}, ok' -f $zone, $ptrTarget, $ptrTargetZone)
                     }
                 }
             }

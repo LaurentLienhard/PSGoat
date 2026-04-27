@@ -28,26 +28,26 @@ class PSGDnsBrokenCname : PSGDnsBase
 
             foreach ($record in $cnameRecords)
             {
-                $target     = $record.RecordData.HostNameAlias.TrimEnd('.')
-                $targetZone = [PSGDnsBase]::FindMatchingZone($target, $Zones)
+                $cnameTarget     = $record.RecordData.HostNameAlias.TrimEnd('.')
+                $cnameTargetZone = [PSGDnsBase]::FindMatchingZone($cnameTarget, $Zones)
 
-                if ([string]::IsNullOrEmpty($targetZone)) { continue }
+                if ([string]::IsNullOrEmpty($cnameTargetZone)) { continue }
 
-                $hostPart = if ($target -eq $targetZone)
+                $hostPart = if ($cnameTarget -eq $cnameTargetZone)
                 {
                     '@'
                 }
                 else
                 {
-                    $target -replace ('\.' + [regex]::Escape($targetZone) + '$'), ''
+                    $cnameTarget -replace ('\.' + [regex]::Escape($cnameTargetZone) + '$'), ''
                 }
 
-                $targetRecords = Get-DnsServerResourceRecord @params -ZoneName $targetZone -Name $hostPart -ErrorAction SilentlyContinue |
+                $targetRecords = Get-DnsServerResourceRecord @params -ZoneName $cnameTargetZone -Name $hostPart -ErrorAction SilentlyContinue |
                     Where-Object -FilterScript { $_.RecordType -in @('A', 'AAAA', 'CNAME') }
 
                 if (-not $targetRecords)
                 {
-                    $results.Add([PSGDnsBrokenCname]::new($record.HostName, $zone, $target))
+                    $results.Add([PSGDnsBrokenCname]::new($record.HostName, $zone, $cnameTarget))
                 }
             }
         }
