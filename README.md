@@ -107,6 +107,35 @@ Get-PSGDnsBrokenCname -ComputerName 'dc01.contoso.com' -Credential (Get-Credenti
 
 ---
 
+### `Get-PSGDnsStaleEntry`
+
+Returns dynamic DNS records that have not been refreshed within a given number of days. Static records (no TimeStamp) are always ignored.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ComputerName` | `string` | local machine | DNS server to query. Accepts pipeline input. |
+| `Credential` | `PSCredential` | — | Credentials for remote connection. Creates a CimSession automatically. |
+| `ZoneName` | `string[]` | all primary zones | Zones to inspect. Auto-discovered when omitted. |
+| `RecordType` | `string[]` | `A`, `AAAA` | Record types to evaluate. Accepted values: `A`, `AAAA`. |
+| `ThresholdDays` | `int` | `30` | Number of days without refresh after which a record is considered stale. Must be ≥ 1. |
+| `LogFilePath` | `string` | — | Write OTel-compatible JSON Lines logs to this file (rotated at 10 MB). |
+
+```powershell
+# Stale records older than 30 days (default)
+Get-PSGDnsStaleEntry
+
+# Custom threshold
+Get-PSGDnsStaleEntry -ThresholdDays 60
+
+# Restricted to one zone with a 14-day threshold
+Get-PSGDnsStaleEntry -ZoneName 'contoso.com' -ThresholdDays 14
+
+# Remote execution
+Get-PSGDnsStaleEntry -ComputerName 'dc01.contoso.com' -Credential (Get-Credential)
+```
+
+---
+
 ## Build
 
 Resolve dependencies (first time only, or after updating `RequiredModules.psd1`):
