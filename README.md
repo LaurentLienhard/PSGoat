@@ -19,6 +19,7 @@ Install-Module -Name PSGoat
 | Function | Synopsis |
 |----------|----------|
 | `Get-PSGDnsEntry` | Returns DNS resource records from one or more zones. Accepts a `-Filter` parameter (`All`, `Static`, `Dynamic`) to restrict results to manually created or DDNS-registered entries, and a `-Duplicate` switch to return only entries where the same hostname has more than one record of the same type. Supports local and remote execution via `ComputerName`. |
+| `Get-PSGDnsOrphanEntry` | Detects orphaned DNS records by cross-referencing forward and reverse zones. Returns A records with no matching PTR (`MissingPTR`), PTR records with no matching A (`MissingA`), or both (default). Reverse zones are discovered automatically. Supports local and remote execution via `ComputerName`. |
 
 ## Build
 

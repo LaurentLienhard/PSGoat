@@ -113,7 +113,7 @@ function Get-PSGDnsEntry
 
     process
     {
-        $moduleVersion = $MyInvocation.MyCommand.Module.Version.ToString()
+        $moduleVersion = if ($MyInvocation.MyCommand.Module) { $MyInvocation.MyCommand.Module.Version.ToString() } else { '0.0.0' }
 
         if ($PSBoundParameters.ContainsKey('LogFilePath'))
         {

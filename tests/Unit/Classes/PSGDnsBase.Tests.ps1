@@ -179,4 +179,59 @@ Describe 'PSGDnsBase' {
             }
         }
     }
+
+    Context 'ComputePtrName static method' {
+        It 'Should reverse the octets and append in-addr.arpa' {
+            InModuleScope $script:moduleName {
+                [PSGDnsBase]::ComputePtrName('192.168.1.10') | Should -Be '10.1.168.192.in-addr.arpa'
+            }
+        }
+
+        It 'Should handle addresses in a class-B range' {
+            InModuleScope $script:moduleName {
+                [PSGDnsBase]::ComputePtrName('10.20.30.40') | Should -Be '40.30.20.10.in-addr.arpa'
+            }
+        }
+    }
+
+    Context 'ComputeIpFromPtr static method' {
+        It 'Should reconstruct the IPv4 address from a class-C PTR record' {
+            InModuleScope $script:moduleName {
+                [PSGDnsBase]::ComputeIpFromPtr('10', '1.168.192.in-addr.arpa') | Should -Be '192.168.1.10'
+            }
+        }
+
+        It 'Should reconstruct the IPv4 address from a class-B PTR record' {
+            InModuleScope $script:moduleName {
+                [PSGDnsBase]::ComputeIpFromPtr('30.1', '168.192.in-addr.arpa') | Should -Be '192.168.1.30'
+            }
+        }
+    }
+
+    Context 'FindMatchingZone static method' {
+        It 'Should return the most specific matching zone' {
+            InModuleScope $script:moduleName {
+                $zones = @('contoso.com', 'sub.contoso.com')
+                [PSGDnsBase]::FindMatchingZone('server01.sub.contoso.com', $zones) | Should -Be 'sub.contoso.com'
+            }
+        }
+
+        It 'Should return the zone when Name equals the zone exactly' {
+            InModuleScope $script:moduleName {
+                [PSGDnsBase]::FindMatchingZone('contoso.com', @('contoso.com')) | Should -Be 'contoso.com'
+            }
+        }
+
+        It 'Should return empty string when no zone matches' {
+            InModuleScope $script:moduleName {
+                [PSGDnsBase]::FindMatchingZone('server01.external.com', @('contoso.com')) | Should -BeNullOrEmpty
+            }
+        }
+
+        It 'Should return empty string when Zones is empty' {
+            InModuleScope $script:moduleName {
+                [PSGDnsBase]::FindMatchingZone('server01.contoso.com', @()) | Should -BeNullOrEmpty
+            }
+        }
+    }
 }

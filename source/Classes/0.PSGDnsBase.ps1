@@ -54,4 +54,40 @@ class PSGDnsBase
 
         return $Record.RecordData.ToString()
     }
+
+    # Returns the full PTR name for an IPv4 address.
+    # e.g. '192.168.1.10' -> '10.1.168.192.in-addr.arpa'
+    static [string] ComputePtrName([string]$IPv4Address)
+    {
+        $octets = $IPv4Address.Split('.')
+        [Array]::Reverse($octets)
+        return '{0}.in-addr.arpa' -f ($octets -join '.')
+    }
+
+    # Reconstructs the IPv4 address from a PTR record name and its reverse zone.
+    # e.g. PtrHostName='10', Zone='1.168.192.in-addr.arpa' -> '192.168.1.10'
+    static [string] ComputeIpFromPtr([string]$PtrHostName, [string]$Zone)
+    {
+        $full           = if ($PtrHostName -eq '@') { $Zone } else { '{0}.{1}' -f $PtrHostName, $Zone }
+        $withoutSuffix  = $full -replace '\.in-addr\.arpa$', ''
+        $octets         = $withoutSuffix.Split('.')
+        [Array]::Reverse($octets)
+        return $octets -join '.'
+    }
+
+    # Returns the most specific zone from Zones that covers Name, or empty string if none match.
+    static [string] FindMatchingZone([string]$Name, [string[]]$Zones)
+    {
+        if (-not $Zones) { return [string]::Empty }
+
+        foreach ($zone in ($Zones | Sort-Object -Property Length -Descending))
+        {
+            if ($Name -eq $zone -or $Name -like "*.$zone")
+            {
+                return $zone
+            }
+        }
+
+        return [string]::Empty
+    }
 }
