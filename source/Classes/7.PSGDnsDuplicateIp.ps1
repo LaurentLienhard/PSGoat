@@ -29,9 +29,10 @@ class PSGDnsDuplicateIp : PSGDnsBase
 
             foreach ($record in $aRecords)
             {
+                $fqdn = ($record.HostName -eq '@') ? $zone : ('{0}.{1}' -f $record.HostName, $zone)
                 $allEntries.Add([PSCustomObject]@{
-                    FQDN      = if ($record.HostName -eq '@') { $zone } else { '{0}.{1}' -f $record.HostName, $zone }
-                    RecordIp  = $record.RecordData.IPv4Address.IPAddressToString
+                    FQDN     = $fqdn
+                    RecordIp = $record.RecordData.IPv4Address.IPAddressToString
                 })
             }
         }
