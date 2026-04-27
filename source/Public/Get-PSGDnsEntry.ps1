@@ -95,7 +95,7 @@ function Get-PSGDnsEntry
         [Parameter()]
         [ValidateSet('A', 'AAAA', 'CNAME', 'MX', 'PTR', 'SRV', 'TXT')]
         [string[]]
-        $RecordType = @('A', 'AAAA'),
+        $RecordType = @('A', 'AAAA', 'CNAME', 'MX', 'PTR', 'SRV', 'TXT'),
 
         [Parameter()]
         [ValidateSet('All', 'Static', 'Dynamic')]
