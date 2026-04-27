@@ -188,6 +188,37 @@ Get-PSGDnsCnameChain -ComputerName 'dc01.contoso.com' -Credential (Get-Credentia
 
 ---
 
+### `Get-PSGDnsZoneStat`
+
+Returns statistics per DNS zone: total records, breakdown by type (A, AAAA, CNAME, MX, PTR, SRV, TXT), static vs dynamic split, and stale record count.
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ComputerName` | `string` | local machine | DNS server to query. Accepts pipeline input. |
+| `Credential` | `PSCredential` | — | Credentials for remote connection. Creates a CimSession automatically. |
+| `ZoneName` | `string[]` | all primary zones | Zones to inspect. Auto-discovered when omitted. |
+| `ThresholdDays` | `int` | `30` | Days without refresh after which a dynamic record is counted as stale. Must be ≥ 1. |
+| `LogFilePath` | `string` | — | Write OTel-compatible JSON Lines logs to this file (rotated at 10 MB). |
+
+```powershell
+# Statistics for all zones
+Get-PSGDnsZoneStat
+
+# Quick summary table
+Get-PSGDnsZoneStat | Format-Table ZoneName, TotalRecords, StaticCount, DynamicCount, StaleCount
+
+# Custom stale threshold
+Get-PSGDnsZoneStat -ThresholdDays 60
+
+# Restricted to one zone
+Get-PSGDnsZoneStat -ZoneName 'contoso.com'
+
+# Remote execution
+Get-PSGDnsZoneStat -ComputerName 'dc01.contoso.com' -Credential (Get-Credential)
+```
+
+---
+
 ## Build
 
 Resolve dependencies (first time only, or after updating `RequiredModules.psd1`):
