@@ -2,18 +2,48 @@
 
 # PSGoat
 
-A PowerShell module providing DNS auditing utilities for Windows DNS Server environments.
+A PowerShell module providing Windows system administration utilities: DNS auditing, DHCP monitoring, and more.
 
 ## Requirements
 
 - PowerShell 5.1 or higher
-- DnsServer module (included in Windows Server RSAT tools)
+- DnsServer module (included in Windows Server RSAT tools) — for DNS functions
+- DhcpServer module (included in Windows Server RSAT tools) — for DHCP functions
 
 ## Installation
 
 ```powershell
 Install-Module -Name PSGoat
 ```
+
+## DHCP Functions
+
+| Function | Description |
+|----------|-------------|
+| [`Get-PSGDhcpScopeUtilization`](#get-psgdhcpscopeutilization) | Returns utilization statistics per DHCPv4 scope: addresses in use, reserved, free, and percentage consumed. |
+
+---
+
+### Get-PSGDhcpScopeUtilization
+
+Returns per-scope utilization data from a Windows DHCP server. Both active leases and reservations are counted as consumed capacity. Use `-Threshold` to surface only scopes at risk of exhaustion.
+
+```powershell
+# All scopes on the local DHCP server
+Get-PSGDhcpScopeUtilization
+
+# Only scopes at 80% utilization or above
+Get-PSGDhcpScopeUtilization -Threshold 80
+
+# Specific scopes on a remote server
+Get-PSGDhcpScopeUtilization -ComputerName 'dhcp01.contoso.com' -Credential (Get-Credential) -Threshold 80
+
+# Two servers, formatted as a table
+'dhcp01.contoso.com', 'dhcp02.contoso.com' | Get-PSGDhcpScopeUtilization -Threshold 80 |
+    Format-Table ScopeId, Name, TotalAddresses, InUse, Free, UtilizationPercent
+```
+
+---
 
 ## DNS Functions
 

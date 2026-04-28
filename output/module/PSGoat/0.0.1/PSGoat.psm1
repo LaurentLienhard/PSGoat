@@ -192,6 +192,146 @@ class PSGDnsForwardReverseMismatch : PSGDnsBase
     }
 }
 #EndRegion './Classes/10.PSGDnsForwardReverseMismatch.ps1' 96
+#Region './Classes/11.PSGDhcpBase.ps1' -1
+
+class PSGDhcpBase
+{
+    # Creates a CimSession for remote execution with credentials. Returns $null for local execution.
+    static [object] NewSession([string]$ComputerName, [PSCredential]$Credential)
+    {
+        if ($null -eq $Credential)
+        {
+            return $null
+        }
+
+        return New-CimSession -ComputerName $ComputerName -Credential $Credential -ErrorAction Stop
+    }
+
+    # Removes a CimSession created by NewSession. Safe to call with $null.
+    static [void] RemoveSession([object]$CimSession)
+    {
+        if ($null -ne $CimSession)
+        {
+            Remove-CimSession -CimSession $CimSession -ErrorAction SilentlyContinue
+        }
+    }
+
+    # Returns all DHCPv4 scopes from the target server.
+    static [object[]] GetScopes([string]$ComputerName, [object]$CimSession)
+    {
+        $params = if ($null -ne $CimSession) { @{ CimSession = $CimSession } } else { @{ ComputerName = $ComputerName } }
+        return @(Get-DhcpServerv4Scope @params -ErrorAction Stop)
+    }
+}
+#EndRegion './Classes/11.PSGDhcpBase.ps1' 30
+#Region './Classes/12.PSGDhcpScopeUtilization.ps1' -1
+
+class PSGDhcpScopeUtilization : PSGDhcpBase
+{
+    [string]$ScopeId
+    [string]$Name
+    [string]$State
+    [uint32]$TotalAddresses
+    [uint32]$InUse
+    [uint32]$Reserved
+    [uint32]$Free
+    [double]$UtilizationPercent
+
+    PSGDhcpScopeUtilization()
+    {
+    }
+
+    PSGDhcpScopeUtilization(
+        [string]$ScopeId,
+        [string]$Name,
+        [string]$State,
+        [uint32]$TotalAddresses,
+        [uint32]$InUse,
+        [uint32]$Reserved,
+        [uint32]$Free,
+        [double]$UtilizationPercent
+    )
+    {
+        $this.ScopeId            = $ScopeId
+        $this.Name               = $Name
+        $this.State              = $State
+        $this.TotalAddresses     = $TotalAddresses
+        $this.InUse              = $InUse
+        $this.Reserved           = $Reserved
+        $this.Free               = $Free
+        $this.UtilizationPercent = $UtilizationPercent
+    }
+
+    # Returns utilization statistics for DHCPv4 scopes, optionally filtered by ScopeId and minimum
+    # utilization threshold. InUse counts active leases; Reserved counts reserved addresses.
+    # Both are treated as consumed capacity for the UtilizationPercent calculation.
+    static [PSGDhcpScopeUtilization[]] GetUtilization(
+        [string]$ComputerName,
+        [string[]]$ScopeId,
+        [double]$Threshold,
+        [object]$CimSession
+    )
+    {
+        $params  = if ($null -ne $CimSession) { @{ CimSession = $CimSession } } else { @{ ComputerName = $ComputerName } }
+        $results = [System.Collections.Generic.List[PSGDhcpScopeUtilization]]::new()
+
+        $allScopes = @(Get-DhcpServerv4Scope @params -ErrorAction SilentlyContinue)
+        $scopeMap  = @{}
+        foreach ($scope in $allScopes)
+        {
+            $scopeMap[$scope.ScopeId.ToString()] = $scope
+        }
+
+        Write-Verbose ('[ScopeUtilization] {0} scope(s) found on {1}' -f $allScopes.Count, $ComputerName)
+
+        $allStats = @(Get-DhcpServerv4ScopeStatistics @params -ErrorAction SilentlyContinue)
+
+        if ($ScopeId.Count -gt 0)
+        {
+            $allStats = @($allStats | Where-Object -FilterScript { $ScopeId -contains $_.ScopeId.ToString() })
+        }
+
+        Write-Verbose ('[ScopeUtilization] {0} scope(s) to evaluate' -f $allStats.Count)
+
+        foreach ($stat in $allStats)
+        {
+            $id    = $stat.ScopeId.ToString()
+            $scope = $scopeMap[$id]
+
+            if ($null -eq $scope) { continue }
+
+            $total = [uint32]($stat.Free + $stat.InUse + $stat.Reserved)
+            $used  = [uint32]($stat.InUse + $stat.Reserved)
+            $pct   = if ($total -gt 0) { [Math]::Round($used / $total * 100, 2) } else { [double]0 }
+
+            Write-Verbose ('[ScopeUtilization] [{0}] {1}% used ({2}/{3} addresses)' -f $id, $pct, $used, $total)
+
+            if ($pct -ge $Threshold)
+            {
+                $results.Add([PSGDhcpScopeUtilization]::new(
+                    $id,
+                    $scope.Name,
+                    $scope.State.ToString(),
+                    $total,
+                    $stat.InUse,
+                    $stat.Reserved,
+                    $stat.Free,
+                    $pct
+                ))
+            }
+        }
+
+        Write-Verbose ('Scan complete -- {0} scope(s) returned' -f $results.Count)
+        return $results.ToArray()
+    }
+
+    [string] ToString()
+    {
+        return '[ScopeUtilization] {0} ({1}) -- {2}% used ({3}/{4} addresses)' -f `
+            $this.ScopeId, $this.Name, $this.UtilizationPercent, ($this.InUse + $this.Reserved), $this.TotalAddresses
+    }
+}
+#EndRegion './Classes/12.PSGDhcpScopeUtilization.ps1' 106
 #Region './Classes/2.PSGLogger.ps1' -1
 
 class PSGLogger
@@ -949,6 +1089,151 @@ class PSGDnsZoneStat : PSGDnsBase
     }
 }
 #EndRegion './Classes/9.PSGDnsZoneStat.ps1' 88
+#Region './Public/Get-PSGDhcpScopeUtilization.ps1' -1
+
+function Get-PSGDhcpScopeUtilization
+{
+    <#
+      .SYNOPSIS
+        Returns utilization statistics for DHCPv4 scopes on a Windows DHCP server.
+
+      .DESCRIPTION
+        Queries a DHCP server and returns per-scope utilization data: total addresses,
+        addresses in use (active leases), reserved addresses, free addresses, and the
+        overall utilization percentage. Both active leases and reservations are counted
+        as consumed capacity.
+
+        The -Threshold parameter restricts output to scopes whose utilization is at or
+        above the specified percentage, making it easy to identify scopes at risk of
+        exhaustion.
+
+        Supports local execution or remote execution via ComputerName and Credential.
+        When Credential is provided, a CimSession is created automatically and cleaned
+        up after execution. Structured logging can be enabled via LogFilePath, producing
+        OTel-compatible JSON Lines output.
+
+      .PARAMETER ComputerName
+        The DHCP server to query. Defaults to the local machine. Accepts pipeline input
+        to query multiple servers sequentially.
+
+      .PARAMETER Credential
+        Credentials to use when connecting to a remote DHCP server. When provided, a
+        CimSession is created automatically.
+
+      .PARAMETER ScopeId
+        One or more scope IDs (e.g. '192.168.1.0') to inspect. If omitted, all scopes
+        on the target server are returned.
+
+      .PARAMETER Threshold
+        Minimum utilization percentage to include in results. Scopes below this value
+        are silently skipped. Defaults to 0 (all scopes returned).
+
+      .PARAMETER LogFilePath
+        Optional path to a log file. When provided, all log entries are written in
+        OTel-compatible JSON Lines format. The file is rotated automatically when it
+        exceeds 10 MB.
+
+      .EXAMPLE
+        Get-PSGDhcpScopeUtilization
+
+        Returns utilization for all scopes on the local DHCP server.
+
+      .EXAMPLE
+        Get-PSGDhcpScopeUtilization -Threshold 80
+
+        Returns only scopes where 80% or more of the address space is consumed.
+
+      .EXAMPLE
+        Get-PSGDhcpScopeUtilization -ScopeId '192.168.1.0', '10.0.0.0'
+
+        Returns utilization for two specific scopes.
+
+      .EXAMPLE
+        Get-PSGDhcpScopeUtilization -ComputerName 'dhcp01.contoso.com' -Credential (Get-Credential) -Threshold 80
+
+        Returns critical scopes from a remote DHCP server using explicit credentials.
+
+      .EXAMPLE
+        'dhcp01.contoso.com', 'dhcp02.contoso.com' | Get-PSGDhcpScopeUtilization -Threshold 80 |
+            Format-Table ScopeId, Name, TotalAddresses, InUse, Free, UtilizationPercent
+
+        Returns critical scopes from two DHCP servers formatted as a table.
+    #>
+    [CmdletBinding()]
+    [OutputType([PSGDhcpScopeUtilization[]])]
+    param
+    (
+        [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
+        [string]
+        $ComputerName = $env:COMPUTERNAME,
+
+        [Parameter()]
+        [PSCredential]
+        $Credential,
+
+        [Parameter()]
+        [string[]]
+        $ScopeId = @(),
+
+        [Parameter()]
+        [ValidateRange(0, 100)]
+        [double]
+        $Threshold = 0,
+
+        [Parameter()]
+        [string]
+        $LogFilePath
+    )
+
+    process
+    {
+        $moduleVersion = if ($MyInvocation.MyCommand.Module) { $MyInvocation.MyCommand.Module.Version.ToString() } else { '0.0.0' }
+
+        if ($PSBoundParameters.ContainsKey('LogFilePath'))
+        {
+            $logger = [PSGLogger]::new('PSGoat', $moduleVersion, $LogFilePath)
+        }
+        else
+        {
+            $logger = [PSGLogger]::new('PSGoat', $moduleVersion)
+        }
+
+        $cimSession = $null
+
+        try
+        {
+            if ($PSBoundParameters.ContainsKey('Credential'))
+            {
+                $logger.Info(('Creating CimSession on {0}' -f $ComputerName), @{ 'computer.name' = $ComputerName })
+                $cimSession = [PSGDhcpScopeUtilization]::NewSession($ComputerName, $Credential)
+            }
+
+            $logger.Info(
+                ('Retrieving DHCP scope utilization from {0} (threshold: {1}%)' -f $ComputerName, $Threshold),
+                @{ 'computer.name' = $ComputerName; 'dhcp.threshold' = $Threshold }
+            )
+
+            $results = [PSGDhcpScopeUtilization]::GetUtilization($ComputerName, $ScopeId, $Threshold, $cimSession)
+
+            $logger.Info(
+                ('{0} scope(s) returned from {1}' -f @($results).Count, $ComputerName),
+                @{ 'computer.name' = $ComputerName; 'dhcp.scope.count' = @($results).Count }
+            )
+
+            $results
+        }
+        catch
+        {
+            $logger.Error($_.Exception.Message, @{ 'computer.name' = $ComputerName; 'error.type' = $_.Exception.GetType().Name })
+            throw
+        }
+        finally
+        {
+            [PSGDhcpScopeUtilization]::RemoveSession($cimSession)
+        }
+    }
+}
+#EndRegion './Public/Get-PSGDhcpScopeUtilization.ps1' 143
 #Region './Public/Get-PSGDnsBrokenCname.ps1' -1
 
 function Get-PSGDnsBrokenCname
