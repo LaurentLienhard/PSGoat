@@ -11,6 +11,20 @@ class PSGComputer
         $this.IsUp         = $IsUp
     }
 
+    # Returns $true if the name resolves in DNS.
+    static [bool] TestDns([string]$ComputerName)
+    {
+        try
+        {
+            $null = Resolve-DnsName -Name $ComputerName -Type A -ErrorAction Stop
+            return $true
+        }
+        catch
+        {
+            return $false
+        }
+    }
+
     # Returns $true if the target responds to ICMP echo.
     static [bool] TestPing([string]$ComputerName)
     {
@@ -37,9 +51,15 @@ class PSGComputer
         }
     }
 
-    # Tests machine reachability: ping first, then ports 445/3389/5985 if ping fails.
+    # Tests machine reachability: DNS resolution first, then ping, then ports 445/3389/5985 if ping fails.
     static [PSGComputer] TestConnectivity([string]$ComputerName)
     {
+        if (-not [PSGComputer]::TestDns($ComputerName))
+        {
+            Write-Verbose ('[PSGComputer] {0}: DNS resolution failed' -f $ComputerName)
+            return [PSGComputer]::new($ComputerName, $false)
+        }
+
         if ([PSGComputer]::TestPing($ComputerName))
         {
             Write-Verbose ('[PSGComputer] {0} responded to ping' -f $ComputerName)

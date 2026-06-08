@@ -1,4 +1,10 @@
 BeforeAll {
+    # Resolve-DnsName is Windows-only; define a stub so Pester can mock it on any platform.
+    if (-not (Get-Command -Name Resolve-DnsName -ErrorAction SilentlyContinue))
+    {
+        function global:Resolve-DnsName { param([string]$Name, [string]$Type) }
+    }
+
     $script:moduleName = 'PSGoat'
     Import-Module -Name $script:moduleName -Force
 }
@@ -9,8 +15,26 @@ AfterAll {
 
 Describe 'Test-PSGComputerConnectivity' {
 
+    Context 'When DNS resolution fails' {
+        BeforeAll {
+            Mock -CommandName Resolve-DnsName -MockWith { throw 'DNS name does not exist' } -ModuleName $script:moduleName
+            Mock -CommandName Test-Connection -MockWith { $true } -ModuleName $script:moduleName
+        }
+
+        It 'Should set IsUp to false' {
+            $result = Test-PSGComputerConnectivity -ComputerName 'unknown.contoso.com'
+            $result.IsUp | Should -BeFalse
+        }
+
+        It 'Should not attempt ping' {
+            Test-PSGComputerConnectivity -ComputerName 'unknown.contoso.com'
+            Should -Invoke -CommandName Test-Connection -Exactly -Times 0 -Scope It -ModuleName $script:moduleName
+        }
+    }
+
     Context 'When ping succeeds' {
         BeforeAll {
+            Mock -CommandName Resolve-DnsName -MockWith { @{ Name = 'server01.contoso.com' } } -ModuleName $script:moduleName
             Mock -CommandName Test-Connection -MockWith { $true } -ModuleName $script:moduleName
         }
 
@@ -33,6 +57,7 @@ Describe 'Test-PSGComputerConnectivity' {
 
     Context 'When ping fails and a port responds' {
         BeforeAll {
+            Mock -CommandName Resolve-DnsName  -MockWith { @{ Name = 'server01.contoso.com' } } -ModuleName $script:moduleName
             Mock -CommandName Test-Connection -MockWith { $false } -ModuleName $script:moduleName
             Mock -CommandName Test-Connection -ParameterFilter { $null -ne $TcpPort } `
                 -MockWith { $true } -ModuleName $script:moduleName
@@ -46,6 +71,7 @@ Describe 'Test-PSGComputerConnectivity' {
 
     Context 'When ping and all ports fail' {
         BeforeAll {
+            Mock -CommandName Resolve-DnsName -MockWith { @{ Name = 'server01.contoso.com' } } -ModuleName $script:moduleName
             Mock -CommandName Test-Connection -MockWith { $false } -ModuleName $script:moduleName
         }
 
@@ -57,6 +83,7 @@ Describe 'Test-PSGComputerConnectivity' {
 
     Context 'When Test-Connection throws an exception on ping' {
         BeforeAll {
+            Mock -CommandName Resolve-DnsName -MockWith { @{ Name = 'server01.contoso.com' } } -ModuleName $script:moduleName
             Mock -CommandName Test-Connection -MockWith { throw 'Host not found' } -ModuleName $script:moduleName
         }
 
@@ -68,6 +95,7 @@ Describe 'Test-PSGComputerConnectivity' {
 
     Context 'When piping multiple computer names' {
         BeforeAll {
+            Mock -CommandName Resolve-DnsName -MockWith { @{ Name = 'server01.contoso.com' } } -ModuleName $script:moduleName
             Mock -CommandName Test-Connection -MockWith { $true } -ModuleName $script:moduleName
         }
 
