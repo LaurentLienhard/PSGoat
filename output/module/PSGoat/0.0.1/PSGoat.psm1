@@ -332,6 +332,73 @@ class PSGDhcpScopeUtilization : PSGDhcpBase
     }
 }
 #EndRegion './Classes/12.PSGDhcpScopeUtilization.ps1' 106
+#Region './Classes/13.PSGComputer.ps1' -1
+
+class PSGComputer
+{
+    [string]$ComputerName
+    [bool]$IsUp
+
+    PSGComputer() {}
+
+    PSGComputer([string]$ComputerName, [bool]$IsUp)
+    {
+        $this.ComputerName = $ComputerName
+        $this.IsUp         = $IsUp
+    }
+
+    # Returns $true if the target responds to ICMP echo.
+    static [bool] TestPing([string]$ComputerName)
+    {
+        try
+        {
+            return [bool](Test-Connection -ComputerName $ComputerName -Count 1 -Quiet -ErrorAction Stop)
+        }
+        catch
+        {
+            return $false
+        }
+    }
+
+    # Returns $true if a TCP connection to the given port succeeds (PS7+ Test-Connection -TcpPort).
+    static [bool] TestPort([string]$ComputerName, [int]$Port)
+    {
+        try
+        {
+            return [bool](Test-Connection -ComputerName $ComputerName -TcpPort $Port -Count 1 -Quiet -ErrorAction Stop)
+        }
+        catch
+        {
+            return $false
+        }
+    }
+
+    # Tests machine reachability: ping first, then ports 445/3389/5985 if ping fails.
+    static [PSGComputer] TestConnectivity([string]$ComputerName)
+    {
+        if ([PSGComputer]::TestPing($ComputerName))
+        {
+            Write-Verbose ('[PSGComputer] {0} responded to ping' -f $ComputerName)
+            return [PSGComputer]::new($ComputerName, $true)
+        }
+
+        Write-Verbose ('[PSGComputer] {0}: ping failed, testing ports 445/3389/5985' -f $ComputerName)
+
+        $reachable = [PSGComputer]::TestPort($ComputerName, 445) -or
+                     [PSGComputer]::TestPort($ComputerName, 3389) -or
+                     [PSGComputer]::TestPort($ComputerName, 5985)
+
+        Write-Verbose ('[PSGComputer] {0}: IsUp={1}' -f $ComputerName, $reachable)
+
+        return [PSGComputer]::new($ComputerName, $reachable)
+    }
+
+    [string] ToString()
+    {
+        return '[PSGComputer] {0} -- IsUp: {1}' -f $this.ComputerName, $this.IsUp
+    }
+}
+#EndRegion './Classes/13.PSGComputer.ps1' 65
 #Region './Classes/2.PSGLogger.ps1' -1
 
 class PSGLogger
@@ -2406,3 +2473,59 @@ function Get-PSGDnsZoneStat
     }
 }
 #EndRegion './Public/Get-PSGDnsZoneStat.ps1' 145
+#Region './Public/Test-PSGComputerConnectivity.ps1' -1
+
+function Test-PSGComputerConnectivity
+{
+    <#
+      .SYNOPSIS
+        Tests whether a computer is reachable on the network.
+
+      .DESCRIPTION
+        Tests machine reachability using a two-stage probe. First, an ICMP echo (ping)
+        is sent. If the target does not respond to ping, TCP connectivity is attempted
+        on ports 445 (SMB), 3389 (RDP), and 5985 (WinRM HTTP).
+
+        A machine is considered UP if it responds to ping or if at least one of the
+        probed ports is open. Each result object contains the computer name and an IsUp
+        boolean.
+
+        Supports pipeline input to test multiple machines in sequence.
+
+      .PARAMETER ComputerName
+        The machine name or IP address to test. Accepts pipeline input. Defaults to
+        the local machine.
+
+      .EXAMPLE
+        Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
+
+        Tests a single remote machine.
+
+      .EXAMPLE
+        'server01.contoso.com', 'server02.contoso.com' | Test-PSGComputerConnectivity
+
+        Tests multiple machines by piping their names.
+
+      .EXAMPLE
+        Get-ADComputer -Filter * | Select-Object -ExpandProperty DNSHostName |
+            Test-PSGComputerConnectivity |
+            Where-Object -FilterScript { -not $_.IsUp }
+
+        Identifies all unreachable AD computers.
+    #>
+    [CmdletBinding()]
+    [OutputType([PSGComputer])]
+    param
+    (
+        [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
+        [string]
+        $ComputerName = $env:COMPUTERNAME
+    )
+
+    process
+    {
+        Write-Verbose ('Testing connectivity to {0}' -f $ComputerName)
+        [PSGComputer]::TestConnectivity($ComputerName)
+    }
+}
+#EndRegion './Public/Test-PSGComputerConnectivity.ps1' 54
