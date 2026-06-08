@@ -1,4 +1,4 @@
-#Region './Classes/0.PSGDnsBase.ps1' -1
+#Region '.\Classes\0.PSGDnsBase.ps1' -1
 
 class PSGDnsBase
 {
@@ -93,8 +93,72 @@ class PSGDnsBase
         return [string]::Empty
     }
 }
-#EndRegion './Classes/0.PSGDnsBase.ps1' 94
-#Region './Classes/2.PSGLogger.ps1' -1
+#EndRegion '.\Classes\0.PSGDnsBase.ps1' 94
+#Region '.\Classes\1.PSGComputer.ps1' -1
+
+class PSGComputer {
+    [string]$ComputerName
+
+    # Constructeur
+    PSGComputer([string]$ComputerName) {
+        $this.ComputerName = $ComputerName
+    }
+
+    # Méthode pour tester si la machine est en ligne
+    [bool]IsOnline() {
+        # 1. Tentative de Ping classique (ICMP) - Timeout de 1000ms
+        try {
+            $ping = New-Object System.Net.NetworkInformation.Ping
+            $reply = $ping.Send($this.ComputerName, 1000)
+
+            if ($reply.Status -eq 'Success') {
+                Write-Verbose "[$($this.ComputerName)] Réponse au PING (ICMP) réussie."
+                return $true
+            }
+        } catch [System.Management.Automation.MethodInvocationException], [System.Net.NetworkInformation.PingException] {
+            # Capture des erreurs de résolution DNS ou d'hôte inaccessible pour le Ping
+            Write-Verbose "[$($this.ComputerName)] Échec du Ping (Attendu si ICMP bloqué) : $($_.Exception.Message)"
+        } catch {
+            # Capture de toute autre erreur inattendue
+            Write-Verbose "[$($this.ComputerName)] Erreur imprévue lors du Ping : $($_.Exception.Message)"
+        }
+
+        # 2. Si le ping échoue, test des ports TCP (SMB, RDP, WinRM)
+        Write-Verbose "[$($this.ComputerName)] ICMP bloqué ou sans réponse. Tentative via les ports TCP..."
+        $TcpPorts = @(445, 3389, 5985)
+
+        foreach ($port in $TcpPorts) {
+            $client = New-Object System.Net.Sockets.TcpClient
+            try {
+                # Connexion asynchrone avec un timeout court (800ms)
+                $asyncResult = $client.BeginConnect($this.ComputerName, $port, $null, $null)
+                $wait = $asyncResult.AsyncWaitHandle.WaitOne(800, $false)
+
+                if ($wait -and $client.Connected) {
+                    Write-Verbose "[$($this.ComputerName)] Connexion réussie sur le port TCP $port."
+                    $client.Close()
+                    return $true
+                }
+            } catch [System.Net.Sockets.SocketException] {
+                # Erreur normale si le port est fermé ou le timeout dépassé
+                Write-Verbose "[$($this.ComputerName)] Port TCP $port fermé ou filtré."
+            } catch {
+                # Autre erreur (ex: problème d'allocation de socket local)
+                Write-Verbose "[$($this.ComputerName)] Erreur lors du test du port $port : $($_.Exception.Message)"
+            } finally {
+                if ($null -ne $client) {
+                    $client.Dispose()
+                }
+            }
+        }
+
+        # 3. Si aucun test n'a fonctionné
+        Write-Verbose "[$($this.ComputerName)] Machine inaccessible (aucun port ne répond)."
+        return $false
+    }
+}
+#EndRegion '.\Classes\1.PSGComputer.ps1' 62
+#Region '.\Classes\2.PSGLogger.ps1' -1
 
 class PSGLogger
 {
@@ -225,8 +289,8 @@ class PSGLogger
         $this.WriteToFile($this.BuildRecord('ERROR', 17, $Message, $Attributes))
     }
 }
-#EndRegion './Classes/2.PSGLogger.ps1' 130
-#Region './Classes/3.PSGDnsEntry.ps1' -1
+#EndRegion '.\Classes\2.PSGLogger.ps1' 130
+#Region '.\Classes\3.PSGDnsEntry.ps1' -1
 
 class PSGDnsEntry : PSGDnsBase
 {
@@ -350,8 +414,8 @@ class PSGDnsEntry : PSGDnsBase
             $this.RecordType, $entryType, $this.HostName, $this.ZoneName, $this.RecordData[0]
     }
 }
-#EndRegion './Classes/3.PSGDnsEntry.ps1' 123
-#Region './Classes/4.PSGDnsOrphanEntry.ps1' -1
+#EndRegion '.\Classes\3.PSGDnsEntry.ps1' 123
+#Region '.\Classes\4.PSGDnsOrphanEntry.ps1' -1
 
 class PSGDnsOrphanEntry : PSGDnsBase
 {
@@ -470,8 +534,8 @@ class PSGDnsOrphanEntry : PSGDnsBase
         return '[{0}] {1} ({2})' -f $this.OrphanType, $this.HostName, $this.IPAddress
     }
 }
-#EndRegion './Classes/4.PSGDnsOrphanEntry.ps1' 118
-#Region './Classes/5.PSGDnsBrokenCname.ps1' -1
+#EndRegion '.\Classes\4.PSGDnsOrphanEntry.ps1' 118
+#Region '.\Classes\5.PSGDnsBrokenCname.ps1' -1
 
 class PSGDnsBrokenCname : PSGDnsBase
 {
@@ -535,8 +599,8 @@ class PSGDnsBrokenCname : PSGDnsBase
         return '[BrokenCNAME] {0}.{1} -> {2} (target not found)' -f $this.HostName, $this.ZoneName, $this.Target
     }
 }
-#EndRegion './Classes/5.PSGDnsBrokenCname.ps1' 63
-#Region './Classes/6.PSGDnsStaleEntry.ps1' -1
+#EndRegion '.\Classes\5.PSGDnsBrokenCname.ps1' 63
+#Region '.\Classes\6.PSGDnsStaleEntry.ps1' -1
 
 class PSGDnsStaleEntry : PSGDnsBase
 {
@@ -605,8 +669,8 @@ class PSGDnsStaleEntry : PSGDnsBase
         return '[Stale] {0}.{1} ({2}) — last seen {3:yyyy-MM-dd} ({4} day(s))' -f $this.HostName, $this.ZoneName, $this.IPAddress, $this.TimeStamp, $this.AgeDays
     }
 }
-#EndRegion './Classes/6.PSGDnsStaleEntry.ps1' 68
-#Region './Classes/7.PSGDnsDuplicateIp.ps1' -1
+#EndRegion '.\Classes\6.PSGDnsStaleEntry.ps1' 68
+#Region '.\Classes\7.PSGDnsDuplicateIp.ps1' -1
 
 class PSGDnsDuplicateIp : PSGDnsBase
 {
@@ -667,8 +731,8 @@ class PSGDnsDuplicateIp : PSGDnsBase
         return '[DuplicateIp] {0} — {1} host(s): {2}' -f $this.IPAddress, $this.Count, ($this.HostNames -join ', ')
     }
 }
-#EndRegion './Classes/7.PSGDnsDuplicateIp.ps1' 60
-#Region './Classes/8.PSGDnsCnameChain.ps1' -1
+#EndRegion '.\Classes\7.PSGDnsDuplicateIp.ps1' 60
+#Region '.\Classes\8.PSGDnsCnameChain.ps1' -1
 
 class PSGDnsCnameChain : PSGDnsBase
 {
@@ -760,8 +824,8 @@ class PSGDnsCnameChain : PSGDnsBase
         return '[CnameChain] {0}.{1} — depth {2}{3}: {4}' -f $this.HostName, $this.ZoneName, $this.Depth, $suffix, ($this.Chain -join ' -> ')
     }
 }
-#EndRegion './Classes/8.PSGDnsCnameChain.ps1' 91
-#Region './Classes/9.PSGDnsZoneStat.ps1' -1
+#EndRegion '.\Classes\8.PSGDnsCnameChain.ps1' 91
+#Region '.\Classes\9.PSGDnsZoneStat.ps1' -1
 
 class PSGDnsZoneStat : PSGDnsBase
 {
@@ -850,8 +914,8 @@ class PSGDnsZoneStat : PSGDnsBase
         return '[ZoneStat] {0} ({1}) — Total: {2} | Static: {3} | Dynamic: {4} | Stale: {5}' -f $this.ZoneName, $this.ZoneType, $this.TotalRecords, $this.StaticCount, $this.DynamicCount, $this.StaleCount
     }
 }
-#EndRegion './Classes/9.PSGDnsZoneStat.ps1' 88
-#Region './Public/Get-PSGDnsBrokenCname.ps1' -1
+#EndRegion '.\Classes\9.PSGDnsZoneStat.ps1' 88
+#Region '.\Public\Get-PSGDnsBrokenCname.ps1' -1
 
 function Get-PSGDnsBrokenCname
 {
@@ -972,8 +1036,8 @@ function Get-PSGDnsBrokenCname
         }
     }
 }
-#EndRegion './Public/Get-PSGDnsBrokenCname.ps1' 120
-#Region './Public/Get-PSGDnsCnameChain.ps1' -1
+#EndRegion '.\Public\Get-PSGDnsBrokenCname.ps1' 120
+#Region '.\Public\Get-PSGDnsCnameChain.ps1' -1
 
 function Get-PSGDnsCnameChain
 {
@@ -1121,8 +1185,8 @@ function Get-PSGDnsCnameChain
         }
     }
 }
-#EndRegion './Public/Get-PSGDnsCnameChain.ps1' 147
-#Region './Public/Get-PSGDnsDuplicateIp.ps1' -1
+#EndRegion '.\Public\Get-PSGDnsCnameChain.ps1' 147
+#Region '.\Public\Get-PSGDnsDuplicateIp.ps1' -1
 
 function Get-PSGDnsDuplicateIp
 {
@@ -1253,8 +1317,8 @@ function Get-PSGDnsDuplicateIp
         }
     }
 }
-#EndRegion './Public/Get-PSGDnsDuplicateIp.ps1' 130
-#Region './Public/Get-PSGDnsEntry.ps1' -1
+#EndRegion '.\Public\Get-PSGDnsDuplicateIp.ps1' 130
+#Region '.\Public\Get-PSGDnsEntry.ps1' -1
 
 function Get-PSGDnsEntry
 {
@@ -1422,8 +1486,8 @@ function Get-PSGDnsEntry
         }
     }
 }
-#EndRegion './Public/Get-PSGDnsEntry.ps1' 167
-#Region './Public/Get-PSGDnsOrphanEntry.ps1' -1
+#EndRegion '.\Public\Get-PSGDnsEntry.ps1' 167
+#Region '.\Public\Get-PSGDnsOrphanEntry.ps1' -1
 
 function Get-PSGDnsOrphanEntry
 {
@@ -1576,8 +1640,8 @@ function Get-PSGDnsOrphanEntry
         }
     }
 }
-#EndRegion './Public/Get-PSGDnsOrphanEntry.ps1' 152
-#Region './Public/Get-PSGDnsStaleEntry.ps1' -1
+#EndRegion '.\Public\Get-PSGDnsOrphanEntry.ps1' 152
+#Region '.\Public\Get-PSGDnsStaleEntry.ps1' -1
 
 function Get-PSGDnsStaleEntry
 {
@@ -1730,8 +1794,8 @@ function Get-PSGDnsStaleEntry
         }
     }
 }
-#EndRegion './Public/Get-PSGDnsStaleEntry.ps1' 152
-#Region './Public/Get-PSGDnsZoneStat.ps1' -1
+#EndRegion '.\Public\Get-PSGDnsStaleEntry.ps1' 152
+#Region '.\Public\Get-PSGDnsZoneStat.ps1' -1
 
 function Get-PSGDnsZoneStat
 {
@@ -1877,4 +1941,4 @@ function Get-PSGDnsZoneStat
         }
     }
 }
-#EndRegion './Public/Get-PSGDnsZoneStat.ps1' 145
+#EndRegion '.\Public\Get-PSGDnsZoneStat.ps1' 145

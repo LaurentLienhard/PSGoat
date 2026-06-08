@@ -1,5 +1,7 @@
-﻿# 1. Récupération des entrées DNS dynamiques via ta fonction
-$dynamicDnsEntries = Get-PSGDnsEntry -Filter Dynamic -ComputerName caw1pdc03 -Credential (Get-Secret AdmAccount) -Verbose -ZoneName fmlogistic.fr
+﻿$computername = "caw1pdc03"
+
+# 1. Récupération des entrées DNS dynamiques via ta fonction
+$dynamicDnsEntries = Get-PSGDnsEntry -Filter Dynamic -ComputerName $computername -Credential (Get-Secret AdmAccount) -Verbose -ZoneName fmlogistic.fr
 
 # 2. Récupération de la liste des serveurs Windows dans l'AD
 # On filtre sur 'OperatingSystem' pour cibler "Windows Server"
