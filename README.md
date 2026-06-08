@@ -2,18 +2,77 @@
 
 # PSGoat
 
-A PowerShell module providing DNS auditing utilities for Windows DNS Server environments.
+A PowerShell module providing Windows system administration utilities: DNS auditing, DHCP monitoring, computer connectivity testing, and more.
 
 ## Requirements
 
 - PowerShell 5.1 or higher
-- DnsServer module (included in Windows Server RSAT tools)
+- DnsServer module (included in Windows Server RSAT tools) — for DNS functions
+- DhcpServer module (included in Windows Server RSAT tools) — for DHCP functions
 
 ## Installation
 
 ```powershell
 Install-Module -Name PSGoat
 ```
+
+## Computer Functions
+
+| Function | Description |
+|----------|-------------|
+| [`Test-PSGComputerConnectivity`](#test-psgcomputerconnectivity) | Tests whether a machine is reachable via ping, then falls back to TCP ports 445/3389/5985. |
+
+---
+
+### Test-PSGComputerConnectivity
+
+Tests machine reachability using a two-stage probe: ICMP echo first, then TCP ports 445 (SMB), 3389 (RDP), and 5985 (WinRM) if ping fails. Returns a `PSGComputer` object with `IsUp`, `DetectionMethod`, `PingSuccess`, and individual port flags.
+
+Requires PowerShell 7+ (uses `Test-Connection -TcpPort` for port probing).
+
+```powershell
+# Test a single machine
+Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
+
+# Test multiple machines via pipeline
+'server01.contoso.com', 'server02.contoso.com' | Test-PSGComputerConnectivity
+
+# Find all unreachable AD computers
+Get-ADComputer -Filter * | Select-Object -ExpandProperty DNSHostName |
+    Test-PSGComputerConnectivity |
+    Where-Object -FilterScript { -not $_.IsUp }
+```
+
+---
+
+## DHCP Functions
+
+| Function | Description |
+|----------|-------------|
+| [`Get-PSGDhcpScopeUtilization`](#get-psgdhcpscopeutilization) | Returns utilization statistics per DHCPv4 scope: addresses in use, reserved, free, and percentage consumed. |
+
+---
+
+### Get-PSGDhcpScopeUtilization
+
+Returns per-scope utilization data from a Windows DHCP server. Both active leases and reservations are counted as consumed capacity. Use `-Threshold` to surface only scopes at risk of exhaustion.
+
+```powershell
+# All scopes on the local DHCP server
+Get-PSGDhcpScopeUtilization
+
+# Only scopes at 80% utilization or above
+Get-PSGDhcpScopeUtilization -Threshold 80
+
+# Specific scopes on a remote server
+Get-PSGDhcpScopeUtilization -ComputerName 'dhcp01.contoso.com' -Credential (Get-Credential) -Threshold 80
+
+# Two servers, formatted as a table
+'dhcp01.contoso.com', 'dhcp02.contoso.com' | Get-PSGDhcpScopeUtilization -Threshold 80 |
+    Format-Table ScopeId, Name, TotalAddresses, InUse, Free, UtilizationPercent
+```
+
+---
 
 ## DNS Functions
 
@@ -26,6 +85,7 @@ Install-Module -Name PSGoat
 | [`Get-PSGDnsDuplicateIp`](#get-psgdnsduplicateip) | Returns IP addresses shared by more than one hostname across the managed zones. |
 | [`Get-PSGDnsCnameChain`](#get-psgdnscnamechain) | Detects long CNAME chains and circular CNAME references. |
 | [`Get-PSGDnsZoneStat`](#get-psgdnszonestat) | Returns per-zone statistics: record counts by type, static/dynamic split, stale count. |
+| [`Get-PSGDnsForwardReverseMismatch`](#get-psgdnsforwardreversemismatch) | Detects A records whose PTR record exists but points to a different FQDN. |
 
 ---
 
@@ -132,6 +192,25 @@ Get-PSGDnsZoneStat | Format-Table ZoneName, TotalRecords, StaticCount, DynamicCo
 
 # Breakdown by record type for a specific zone
 (Get-PSGDnsZoneStat -ZoneName 'contoso.com').ByType
+```
+
+---
+
+### Get-PSGDnsForwardReverseMismatch
+
+Detects A records where a PTR record exists for the same IP but points to a different FQDN. Records without any PTR are intentionally skipped — use `Get-PSGDnsOrphanEntry` for those.
+
+Typical causes: server renames, IP reassignments, or incomplete migrations where the reverse zone was not updated.
+
+```powershell
+# All forward/reverse mismatches across every primary zone
+Get-PSGDnsForwardReverseMismatch
+
+# Restricted to one forward zone
+Get-PSGDnsForwardReverseMismatch -ZoneName 'contoso.com'
+
+# Remote execution with credentials
+Get-PSGDnsForwardReverseMismatch -ComputerName 'dc01.contoso.com' -Credential (Get-Credential)
 ```
 
 ---

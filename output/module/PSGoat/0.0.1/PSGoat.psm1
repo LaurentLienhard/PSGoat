@@ -94,70 +94,334 @@ class PSGDnsBase
     }
 }
 #EndRegion '.\Classes\0.PSGDnsBase.ps1' 94
-#Region '.\Classes\1.PSGComputer.ps1' -1
+#Region '.\Classes\10.PSGDnsForwardReverseMismatch.ps1' -1
 
-class PSGComputer {
-    [string]$ComputerName
+class PSGDnsForwardReverseMismatch : PSGDnsBase
+{
+    [string]$ForwardFQDN
+    [string]$IPAddress
+    [string]$ReverseFQDN
 
-    # Constructeur
-    PSGComputer([string]$ComputerName) {
-        $this.ComputerName = $ComputerName
+    PSGDnsForwardReverseMismatch()
+    {
     }
 
-    # Méthode pour tester si la machine est en ligne
-    [bool]IsOnline() {
-        # 1. Tentative de Ping classique (ICMP) - Timeout de 1000ms
-        try {
-            $ping = New-Object System.Net.NetworkInformation.Ping
-            $reply = $ping.Send($this.ComputerName, 1000)
+    PSGDnsForwardReverseMismatch([string]$ForwardFQDN, [string]$IPAddress, [string]$ReverseFQDN)
+    {
+        $this.ForwardFQDN = $ForwardFQDN
+        $this.IPAddress   = $IPAddress
+        $this.ReverseFQDN = $ReverseFQDN
+    }
 
-            if ($reply.Status -eq 'Success') {
-                Write-Verbose "[$($this.ComputerName)] Réponse au PING (ICMP) réussie."
-                return $true
-            }
-        } catch [System.Management.Automation.MethodInvocationException], [System.Net.NetworkInformation.PingException] {
-            # Capture des erreurs de résolution DNS ou d'hôte inaccessible pour le Ping
-            Write-Verbose "[$($this.ComputerName)] Échec du Ping (Attendu si ICMP bloqué) : $($_.Exception.Message)"
-        } catch {
-            # Capture de toute autre erreur inattendue
-            Write-Verbose "[$($this.ComputerName)] Erreur imprévue lors du Ping : $($_.Exception.Message)"
-        }
+    # Finds A records whose PTR record exists but points to a different FQDN.
+    # Records with no PTR at all are intentionally ignored (use Get-PSGDnsOrphanEntry for that).
+    static [PSGDnsForwardReverseMismatch[]] FindMismatches(
+        [string]$ComputerName,
+        [string[]]$ForwardZones,
+        [string[]]$ReverseZones,
+        [object]$CimSession
+    )
+    {
+        $params  = if ($null -ne $CimSession) { @{ CimSession = $CimSession } } else { @{ ComputerName = $ComputerName } }
+        $results = [System.Collections.Generic.List[PSGDnsForwardReverseMismatch]]::new()
 
-        # 2. Si le ping échoue, test des ports TCP (SMB, RDP, WinRM)
-        Write-Verbose "[$($this.ComputerName)] ICMP bloqué ou sans réponse. Tentative via les ports TCP..."
-        $TcpPorts = @(445, 3389, 5985)
+        $forwardByIp = [System.Collections.Generic.Dictionary[string, System.Collections.Generic.List[string]]]::new()
 
-        foreach ($port in $TcpPorts) {
-            $client = New-Object System.Net.Sockets.TcpClient
-            try {
-                # Connexion asynchrone avec un timeout court (800ms)
-                $asyncResult = $client.BeginConnect($this.ComputerName, $port, $null, $null)
-                $wait = $asyncResult.AsyncWaitHandle.WaitOne(800, $false)
+        foreach ($zone in $ForwardZones)
+        {
+            $aRecords = Get-DnsServerResourceRecord @params -ZoneName $zone -RRType A -ErrorAction SilentlyContinue
+            Write-Verbose ('[ForwardReverse] [{0}] {1} A record(s) collected' -f $zone, @($aRecords).Count)
 
-                if ($wait -and $client.Connected) {
-                    Write-Verbose "[$($this.ComputerName)] Connexion réussie sur le port TCP $port."
-                    $client.Close()
-                    return $true
+            foreach ($record in $aRecords)
+            {
+                $fqdn = ($record.HostName -eq '@') ? $zone : ('{0}.{1}' -f $record.HostName, $zone)
+                $ip   = $record.RecordData.IPv4Address.IPAddressToString
+
+                if (-not $forwardByIp.ContainsKey($ip))
+                {
+                    $forwardByIp[$ip] = [System.Collections.Generic.List[string]]::new()
                 }
-            } catch [System.Net.Sockets.SocketException] {
-                # Erreur normale si le port est fermé ou le timeout dépassé
-                Write-Verbose "[$($this.ComputerName)] Port TCP $port fermé ou filtré."
-            } catch {
-                # Autre erreur (ex: problème d'allocation de socket local)
-                Write-Verbose "[$($this.ComputerName)] Erreur lors du test du port $port : $($_.Exception.Message)"
-            } finally {
-                if ($null -ne $client) {
-                    $client.Dispose()
-                }
+                $forwardByIp[$ip].Add($fqdn)
             }
         }
 
-        # 3. Si aucun test n'a fonctionné
-        Write-Verbose "[$($this.ComputerName)] Machine inaccessible (aucun port ne répond)."
-        return $false
+        Write-Verbose ('[ForwardReverse] {0} unique IP(s) from {1} forward zone(s)' -f $forwardByIp.Count, $ForwardZones.Count)
+
+        $reverseMap = [System.Collections.Generic.Dictionary[string, string]]::new()
+
+        foreach ($zone in $ReverseZones)
+        {
+            $ptrRecords = Get-DnsServerResourceRecord @params -ZoneName $zone -RRType PTR -ErrorAction SilentlyContinue
+            Write-Verbose ('[ForwardReverse] [{0}] {1} PTR record(s) collected' -f $zone, @($ptrRecords).Count)
+
+            foreach ($record in $ptrRecords)
+            {
+                $ip     = [PSGDnsBase]::ComputeIpFromPtr($record.HostName, $zone)
+                $target = $record.RecordData.PtrDomainName.TrimEnd('.')
+                $reverseMap[$ip] = $target
+            }
+        }
+
+        Write-Verbose ('[ForwardReverse] {0} PTR record(s) from {1} reverse zone(s)' -f $reverseMap.Count, $ReverseZones.Count)
+
+        foreach ($entry in $forwardByIp.GetEnumerator())
+        {
+            $ip = $entry.Key
+
+            if (-not $reverseMap.ContainsKey($ip)) { continue }
+
+            $ptrTarget = $reverseMap[$ip]
+
+            foreach ($fqdn in $entry.Value)
+            {
+                if ($fqdn -ne $ptrTarget)
+                {
+                    Write-Verbose ('[ForwardReverse] Mismatch -- A:{0}->{1} but PTR:{1}->{2}' -f $fqdn, $ip, $ptrTarget)
+                    $results.Add([PSGDnsForwardReverseMismatch]::new($fqdn, $ip, $ptrTarget))
+                }
+            }
+        }
+
+        Write-Verbose ('Scan complete -- {0} mismatch(es) found' -f $results.Count)
+        return $results.ToArray()
+    }
+
+    [string] ToString()
+    {
+        return '[ForwardReverse] A:{0}->{1} -- PTR:{1}->{2}' -f $this.ForwardFQDN, $this.IPAddress, $this.ReverseFQDN
     }
 }
-#EndRegion '.\Classes\1.PSGComputer.ps1' 62
+#EndRegion '.\Classes\10.PSGDnsForwardReverseMismatch.ps1' 96
+#Region '.\Classes\11.PSGDhcpBase.ps1' -1
+
+class PSGDhcpBase
+{
+    # Creates a CimSession for remote execution with credentials. Returns $null for local execution.
+    static [object] NewSession([string]$ComputerName, [PSCredential]$Credential)
+    {
+        if ($null -eq $Credential)
+        {
+            return $null
+        }
+
+        return New-CimSession -ComputerName $ComputerName -Credential $Credential -ErrorAction Stop
+    }
+
+    # Removes a CimSession created by NewSession. Safe to call with $null.
+    static [void] RemoveSession([object]$CimSession)
+    {
+        if ($null -ne $CimSession)
+        {
+            Remove-CimSession -CimSession $CimSession -ErrorAction SilentlyContinue
+        }
+    }
+
+    # Returns all DHCPv4 scopes from the target server.
+    static [object[]] GetScopes([string]$ComputerName, [object]$CimSession)
+    {
+        $params = if ($null -ne $CimSession) { @{ CimSession = $CimSession } } else { @{ ComputerName = $ComputerName } }
+        return @(Get-DhcpServerv4Scope @params -ErrorAction Stop)
+    }
+}
+#EndRegion '.\Classes\11.PSGDhcpBase.ps1' 30
+#Region '.\Classes\12.PSGDhcpScopeUtilization.ps1' -1
+
+class PSGDhcpScopeUtilization : PSGDhcpBase
+{
+    [string]$ScopeId
+    [string]$Name
+    [string]$State
+    [uint32]$TotalAddresses
+    [uint32]$InUse
+    [uint32]$Reserved
+    [uint32]$Free
+    [double]$UtilizationPercent
+
+    PSGDhcpScopeUtilization()
+    {
+    }
+
+    PSGDhcpScopeUtilization(
+        [string]$ScopeId,
+        [string]$Name,
+        [string]$State,
+        [uint32]$TotalAddresses,
+        [uint32]$InUse,
+        [uint32]$Reserved,
+        [uint32]$Free,
+        [double]$UtilizationPercent
+    )
+    {
+        $this.ScopeId            = $ScopeId
+        $this.Name               = $Name
+        $this.State              = $State
+        $this.TotalAddresses     = $TotalAddresses
+        $this.InUse              = $InUse
+        $this.Reserved           = $Reserved
+        $this.Free               = $Free
+        $this.UtilizationPercent = $UtilizationPercent
+    }
+
+    # Returns utilization statistics for DHCPv4 scopes, optionally filtered by ScopeId and minimum
+    # utilization threshold. InUse counts active leases; Reserved counts reserved addresses.
+    # Both are treated as consumed capacity for the UtilizationPercent calculation.
+    static [PSGDhcpScopeUtilization[]] GetUtilization(
+        [string]$ComputerName,
+        [string[]]$ScopeId,
+        [double]$Threshold,
+        [object]$CimSession
+    )
+    {
+        $params  = if ($null -ne $CimSession) { @{ CimSession = $CimSession } } else { @{ ComputerName = $ComputerName } }
+        $results = [System.Collections.Generic.List[PSGDhcpScopeUtilization]]::new()
+
+        $allScopes = @(Get-DhcpServerv4Scope @params -ErrorAction SilentlyContinue)
+        $scopeMap  = @{}
+        foreach ($scope in $allScopes)
+        {
+            $scopeMap[$scope.ScopeId.ToString()] = $scope
+        }
+
+        Write-Verbose ('[ScopeUtilization] {0} scope(s) found on {1}' -f $allScopes.Count, $ComputerName)
+
+        $allStats = @(Get-DhcpServerv4ScopeStatistics @params -ErrorAction SilentlyContinue)
+
+        if ($ScopeId.Count -gt 0)
+        {
+            $allStats = @($allStats | Where-Object -FilterScript { $ScopeId -contains $_.ScopeId.ToString() })
+        }
+
+        Write-Verbose ('[ScopeUtilization] {0} scope(s) to evaluate' -f $allStats.Count)
+
+        foreach ($stat in $allStats)
+        {
+            $id    = $stat.ScopeId.ToString()
+            $scope = $scopeMap[$id]
+
+            if ($null -eq $scope) { continue }
+
+            $total = [uint32]($stat.Free + $stat.InUse + $stat.Reserved)
+            $used  = [uint32]($stat.InUse + $stat.Reserved)
+            $pct   = if ($total -gt 0) { [Math]::Round($used / $total * 100, 2) } else { [double]0 }
+
+            Write-Verbose ('[ScopeUtilization] [{0}] {1}% used ({2}/{3} addresses)' -f $id, $pct, $used, $total)
+
+            if ($pct -ge $Threshold)
+            {
+                $results.Add([PSGDhcpScopeUtilization]::new(
+                    $id,
+                    $scope.Name,
+                    $scope.State.ToString(),
+                    $total,
+                    $stat.InUse,
+                    $stat.Reserved,
+                    $stat.Free,
+                    $pct
+                ))
+            }
+        }
+
+        Write-Verbose ('Scan complete -- {0} scope(s) returned' -f $results.Count)
+        return $results.ToArray()
+    }
+
+    [string] ToString()
+    {
+        return '[ScopeUtilization] {0} ({1}) -- {2}% used ({3}/{4} addresses)' -f `
+            $this.ScopeId, $this.Name, $this.UtilizationPercent, ($this.InUse + $this.Reserved), $this.TotalAddresses
+    }
+}
+#EndRegion '.\Classes\12.PSGDhcpScopeUtilization.ps1' 106
+#Region '.\Classes\13.PSGComputer.ps1' -1
+
+class PSGComputer
+{
+    [string]$ComputerName
+    [bool]$IsUp
+    [string]$DetectionMethod
+    [bool]$PingSuccess
+    [bool]$Port445Open
+    [bool]$Port3389Open
+    [bool]$Port5985Open
+
+    PSGComputer() {}
+
+    PSGComputer(
+        [string]$ComputerName,
+        [bool]$IsUp,
+        [string]$DetectionMethod,
+        [bool]$PingSuccess,
+        [bool]$Port445Open,
+        [bool]$Port3389Open,
+        [bool]$Port5985Open
+    )
+    {
+        $this.ComputerName    = $ComputerName
+        $this.IsUp            = $IsUp
+        $this.DetectionMethod = $DetectionMethod
+        $this.PingSuccess     = $PingSuccess
+        $this.Port445Open     = $Port445Open
+        $this.Port3389Open    = $Port3389Open
+        $this.Port5985Open    = $Port5985Open
+    }
+
+    # Returns $true if the target responds to ICMP echo.
+    static [bool] TestPing([string]$ComputerName)
+    {
+        try
+        {
+            return [bool](Test-Connection -ComputerName $ComputerName -Count 1 -Quiet -ErrorAction Stop)
+        }
+        catch
+        {
+            return $false
+        }
+    }
+
+    # Returns $true if a TCP connection to the given port succeeds (PS7+ Test-Connection -TcpPort).
+    static [bool] TestPort([string]$ComputerName, [int]$Port)
+    {
+        try
+        {
+            return [bool](Test-Connection -ComputerName $ComputerName -TcpPort $Port -Count 1 -Quiet -ErrorAction Stop)
+        }
+        catch
+        {
+            return $false
+        }
+    }
+
+    # Tests machine reachability: ping first, then ports 445/3389/5985 if ping fails.
+    static [PSGComputer] TestConnectivity([string]$ComputerName)
+    {
+        $pingOk = [PSGComputer]::TestPing($ComputerName)
+
+        if ($pingOk)
+        {
+            Write-Verbose ('[PSGComputer] {0} responded to ping' -f $ComputerName)
+            return [PSGComputer]::new($ComputerName, $true, 'Ping', $true, $false, $false, $false)
+        }
+
+        Write-Verbose ('[PSGComputer] {0}: ping failed, testing ports 445/3389/5985' -f $ComputerName)
+
+        $p445  = [PSGComputer]::TestPort($ComputerName, 445)
+        $p3389 = [PSGComputer]::TestPort($ComputerName, 3389)
+        $p5985 = [PSGComputer]::TestPort($ComputerName, 5985)
+
+        $reachable = $p445 -or $p3389 -or $p5985
+        $method    = if ($reachable) { 'Port' } else { 'Unreachable' }
+
+        Write-Verbose ('[PSGComputer] {0}: Port 445={1} 3389={2} 5985={3} -- IsUp={4}' -f $ComputerName, $p445, $p3389, $p5985, $reachable)
+
+        return [PSGComputer]::new($ComputerName, $reachable, $method, $false, $p445, $p3389, $p5985)
+    }
+
+    [string] ToString()
+    {
+        return '[PSGComputer] {0} -- IsUp: {1} ({2})' -f $this.ComputerName, $this.IsUp, $this.DetectionMethod
+    }
+}
+#EndRegion '.\Classes\13.PSGComputer.ps1' 88
 #Region '.\Classes\2.PSGLogger.ps1' -1
 
 class PSGLogger
@@ -915,6 +1179,151 @@ class PSGDnsZoneStat : PSGDnsBase
     }
 }
 #EndRegion '.\Classes\9.PSGDnsZoneStat.ps1' 88
+#Region '.\Public\Get-PSGDhcpScopeUtilization.ps1' -1
+
+function Get-PSGDhcpScopeUtilization
+{
+    <#
+      .SYNOPSIS
+        Returns utilization statistics for DHCPv4 scopes on a Windows DHCP server.
+
+      .DESCRIPTION
+        Queries a DHCP server and returns per-scope utilization data: total addresses,
+        addresses in use (active leases), reserved addresses, free addresses, and the
+        overall utilization percentage. Both active leases and reservations are counted
+        as consumed capacity.
+
+        The -Threshold parameter restricts output to scopes whose utilization is at or
+        above the specified percentage, making it easy to identify scopes at risk of
+        exhaustion.
+
+        Supports local execution or remote execution via ComputerName and Credential.
+        When Credential is provided, a CimSession is created automatically and cleaned
+        up after execution. Structured logging can be enabled via LogFilePath, producing
+        OTel-compatible JSON Lines output.
+
+      .PARAMETER ComputerName
+        The DHCP server to query. Defaults to the local machine. Accepts pipeline input
+        to query multiple servers sequentially.
+
+      .PARAMETER Credential
+        Credentials to use when connecting to a remote DHCP server. When provided, a
+        CimSession is created automatically.
+
+      .PARAMETER ScopeId
+        One or more scope IDs (e.g. '192.168.1.0') to inspect. If omitted, all scopes
+        on the target server are returned.
+
+      .PARAMETER Threshold
+        Minimum utilization percentage to include in results. Scopes below this value
+        are silently skipped. Defaults to 0 (all scopes returned).
+
+      .PARAMETER LogFilePath
+        Optional path to a log file. When provided, all log entries are written in
+        OTel-compatible JSON Lines format. The file is rotated automatically when it
+        exceeds 10 MB.
+
+      .EXAMPLE
+        Get-PSGDhcpScopeUtilization
+
+        Returns utilization for all scopes on the local DHCP server.
+
+      .EXAMPLE
+        Get-PSGDhcpScopeUtilization -Threshold 80
+
+        Returns only scopes where 80% or more of the address space is consumed.
+
+      .EXAMPLE
+        Get-PSGDhcpScopeUtilization -ScopeId '192.168.1.0', '10.0.0.0'
+
+        Returns utilization for two specific scopes.
+
+      .EXAMPLE
+        Get-PSGDhcpScopeUtilization -ComputerName 'dhcp01.contoso.com' -Credential (Get-Credential) -Threshold 80
+
+        Returns critical scopes from a remote DHCP server using explicit credentials.
+
+      .EXAMPLE
+        'dhcp01.contoso.com', 'dhcp02.contoso.com' | Get-PSGDhcpScopeUtilization -Threshold 80 |
+            Format-Table ScopeId, Name, TotalAddresses, InUse, Free, UtilizationPercent
+
+        Returns critical scopes from two DHCP servers formatted as a table.
+    #>
+    [CmdletBinding()]
+    [OutputType([PSGDhcpScopeUtilization[]])]
+    param
+    (
+        [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
+        [string]
+        $ComputerName = $env:COMPUTERNAME,
+
+        [Parameter()]
+        [PSCredential]
+        $Credential,
+
+        [Parameter()]
+        [string[]]
+        $ScopeId = @(),
+
+        [Parameter()]
+        [ValidateRange(0, 100)]
+        [double]
+        $Threshold = 0,
+
+        [Parameter()]
+        [string]
+        $LogFilePath
+    )
+
+    process
+    {
+        $moduleVersion = if ($MyInvocation.MyCommand.Module) { $MyInvocation.MyCommand.Module.Version.ToString() } else { '0.0.0' }
+
+        if ($PSBoundParameters.ContainsKey('LogFilePath'))
+        {
+            $logger = [PSGLogger]::new('PSGoat', $moduleVersion, $LogFilePath)
+        }
+        else
+        {
+            $logger = [PSGLogger]::new('PSGoat', $moduleVersion)
+        }
+
+        $cimSession = $null
+
+        try
+        {
+            if ($PSBoundParameters.ContainsKey('Credential'))
+            {
+                $logger.Info(('Creating CimSession on {0}' -f $ComputerName), @{ 'computer.name' = $ComputerName })
+                $cimSession = [PSGDhcpScopeUtilization]::NewSession($ComputerName, $Credential)
+            }
+
+            $logger.Info(
+                ('Retrieving DHCP scope utilization from {0} (threshold: {1}%)' -f $ComputerName, $Threshold),
+                @{ 'computer.name' = $ComputerName; 'dhcp.threshold' = $Threshold }
+            )
+
+            $results = [PSGDhcpScopeUtilization]::GetUtilization($ComputerName, $ScopeId, $Threshold, $cimSession)
+
+            $logger.Info(
+                ('{0} scope(s) returned from {1}' -f @($results).Count, $ComputerName),
+                @{ 'computer.name' = $ComputerName; 'dhcp.scope.count' = @($results).Count }
+            )
+
+            $results
+        }
+        catch
+        {
+            $logger.Error($_.Exception.Message, @{ 'computer.name' = $ComputerName; 'error.type' = $_.Exception.GetType().Name })
+            throw
+        }
+        finally
+        {
+            [PSGDhcpScopeUtilization]::RemoveSession($cimSession)
+        }
+    }
+}
+#EndRegion '.\Public\Get-PSGDhcpScopeUtilization.ps1' 143
 #Region '.\Public\Get-PSGDnsBrokenCname.ps1' -1
 
 function Get-PSGDnsBrokenCname
@@ -1487,6 +1896,151 @@ function Get-PSGDnsEntry
     }
 }
 #EndRegion '.\Public\Get-PSGDnsEntry.ps1' 167
+#Region '.\Public\Get-PSGDnsForwardReverseMismatch.ps1' -1
+
+function Get-PSGDnsForwardReverseMismatch
+{
+    <#
+      .SYNOPSIS
+        Returns A records whose corresponding PTR record exists but points to a different FQDN.
+
+      .DESCRIPTION
+        Queries a DNS server and cross-references forward zones (A records) with reverse zones
+        (PTR records). For each A record where a PTR exists for the same IP, this function checks
+        whether the PTR target matches the A record hostname. Records where no PTR exists at all
+        are intentionally skipped -- use Get-PSGDnsOrphanEntry to detect those.
+
+        This is useful for detecting stale or inconsistent reverse DNS entries left behind after
+        server renames, IP reassignments, or incomplete migrations.
+
+        Reverse zones are always discovered automatically. The -ZoneName parameter restricts which
+        forward zones are inspected; if omitted, all primary non-auto-created forward zones are used.
+        Supports local execution or remote execution via ComputerName and Credential. When Credential
+        is provided, a CimSession is created automatically and cleaned up after execution. Structured
+        logging can be enabled via LogFilePath, producing OTel-compatible JSON Lines output.
+
+      .PARAMETER ComputerName
+        The DNS server to query. Defaults to the local machine. Accepts pipeline input
+        to query multiple servers sequentially.
+
+      .PARAMETER Credential
+        Credentials to use when connecting to a remote DNS server. When provided, a
+        CimSession is created automatically.
+
+      .PARAMETER ZoneName
+        One or more forward DNS zone names to inspect. If omitted, all primary
+        non-auto-created forward zones are used. Reverse zones are always discovered
+        automatically regardless of this parameter.
+
+      .PARAMETER LogFilePath
+        Optional path to a log file. When provided, all log entries are written in
+        OTel-compatible JSON Lines format. The file is rotated automatically when it
+        exceeds 10 MB.
+
+      .EXAMPLE
+        Get-PSGDnsForwardReverseMismatch
+
+        Returns all forward/reverse mismatches across every primary zone on the local DNS server.
+
+      .EXAMPLE
+        Get-PSGDnsForwardReverseMismatch -ZoneName 'contoso.com'
+
+        Returns mismatches restricted to the contoso.com forward zone.
+
+      .EXAMPLE
+        Get-PSGDnsForwardReverseMismatch -ComputerName 'dc01.contoso.com' -Credential (Get-Credential)
+
+        Returns mismatches from dc01 using explicit credentials.
+
+      .EXAMPLE
+        'dc01.contoso.com', 'dc02.contoso.com' | Get-PSGDnsForwardReverseMismatch
+
+        Returns mismatches from two DNS servers sequentially.
+    #>
+    [CmdletBinding()]
+    [OutputType([PSGDnsForwardReverseMismatch[]])]
+    param
+    (
+        [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
+        [string]
+        $ComputerName = $env:COMPUTERNAME,
+
+        [Parameter()]
+        [PSCredential]
+        $Credential,
+
+        [Parameter()]
+        [string[]]
+        $ZoneName,
+
+        [Parameter()]
+        [string]
+        $LogFilePath
+    )
+
+    process
+    {
+        $moduleVersion = if ($MyInvocation.MyCommand.Module) { $MyInvocation.MyCommand.Module.Version.ToString() } else { '0.0.0' }
+
+        if ($PSBoundParameters.ContainsKey('LogFilePath'))
+        {
+            $logger = [PSGLogger]::new('PSGoat', $moduleVersion, $LogFilePath)
+        }
+        else
+        {
+            $logger = [PSGLogger]::new('PSGoat', $moduleVersion)
+        }
+
+        $cimSession = $null
+
+        try
+        {
+            if ($PSBoundParameters.ContainsKey('Credential'))
+            {
+                $logger.Info(('Creating CimSession on {0}' -f $ComputerName), @{ 'computer.name' = $ComputerName })
+                $cimSession = [PSGDnsForwardReverseMismatch]::NewSession($ComputerName, $Credential)
+            }
+
+            $logger.Info(('Retrieving DNS zones from {0}' -f $ComputerName), @{ 'computer.name' = $ComputerName })
+            $allZones = [PSGDnsForwardReverseMismatch]::GetZones($ComputerName, $cimSession)
+
+            $reverseZones = @($allZones | Where-Object -FilterScript { $_ -match '\.in-addr\.arpa$|\.ip6\.arpa$' })
+            $forwardZones = @($allZones | Where-Object -FilterScript { $_ -notmatch '\.in-addr\.arpa$|\.ip6\.arpa$' })
+
+            if ($PSBoundParameters.ContainsKey('ZoneName'))
+            {
+                $forwardZones = $ZoneName
+            }
+
+            $logger.Info(
+                ('Scanning {0} forward zone(s) and {1} reverse zone(s) on {2}' -f $forwardZones.Count, $reverseZones.Count, $ComputerName),
+                @{ 'computer.name' = $ComputerName; 'dns.forward.zone.count' = $forwardZones.Count; 'dns.reverse.zone.count' = $reverseZones.Count }
+            )
+
+            Write-Verbose ('Forward zones: {0}' -f ($forwardZones -join ', '))
+            Write-Verbose ('Reverse zones: {0}' -f ($reverseZones -join ', '))
+
+            $mismatches = [PSGDnsForwardReverseMismatch]::FindMismatches($ComputerName, $forwardZones, $reverseZones, $cimSession)
+
+            $logger.Info(
+                ('{0} forward/reverse mismatch(es) found on {1}' -f @($mismatches).Count, $ComputerName),
+                @{ 'computer.name' = $ComputerName; 'dns.mismatch.count' = @($mismatches).Count }
+            )
+
+            $mismatches
+        }
+        catch
+        {
+            $logger.Error($_.Exception.Message, @{ 'computer.name' = $ComputerName; 'error.type' = $_.Exception.GetType().Name })
+            throw
+        }
+        finally
+        {
+            [PSGDnsForwardReverseMismatch]::RemoveSession($cimSession)
+        }
+    }
+}
+#EndRegion '.\Public\Get-PSGDnsForwardReverseMismatch.ps1' 143
 #Region '.\Public\Get-PSGDnsOrphanEntry.ps1' -1
 
 function Get-PSGDnsOrphanEntry
@@ -1942,3 +2496,70 @@ function Get-PSGDnsZoneStat
     }
 }
 #EndRegion '.\Public\Get-PSGDnsZoneStat.ps1' 145
+#Region '.\Public\Test-PSGComputerConnectivity.ps1' -1
+
+function Test-PSGComputerConnectivity
+{
+    <#
+      .SYNOPSIS
+        Tests whether a computer is reachable on the network.
+
+      .DESCRIPTION
+        Tests machine reachability using a two-stage probe. First, an ICMP echo (ping)
+        is sent. If the target does not respond to ping, TCP connectivity is attempted
+        on ports 445 (SMB), 3389 (RDP), and 5985 (WinRM HTTP).
+
+        A machine is considered UP if it responds to ping or if at least one of the
+        probed ports is open. Machines that respond to neither are reported as
+        Unreachable.
+
+        Each result object includes the computer name, an IsUp boolean, the detection
+        method used (Ping, Port, or Unreachable), and individual boolean flags for
+        PingSuccess, Port445Open, Port3389Open, and Port5985Open. Port flags are $false
+        when ping succeeds (ports are not probed in that case).
+
+        Supports pipeline input to test multiple machines in sequence.
+
+      .PARAMETER ComputerName
+        The machine name or IP address to test. Accepts pipeline input. Defaults to
+        the local machine.
+
+      .EXAMPLE
+        Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
+
+        Tests a single remote machine.
+
+      .EXAMPLE
+        'server01.contoso.com', 'server02.contoso.com' | Test-PSGComputerConnectivity
+
+        Tests multiple machines by piping their names.
+
+      .EXAMPLE
+        Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com' |
+            Select-Object ComputerName, IsUp, DetectionMethod, Port445Open, Port3389Open, Port5985Open
+
+        Returns a detailed connectivity summary for a machine that did not respond to ping.
+
+      .EXAMPLE
+        Get-ADComputer -Filter * | Select-Object -ExpandProperty DNSHostName |
+            Test-PSGComputerConnectivity |
+            Where-Object -FilterScript { -not $_.IsUp }
+
+        Identifies all unreachable AD computers.
+    #>
+    [CmdletBinding()]
+    [OutputType([PSGComputer])]
+    param
+    (
+        [Parameter(ValueFromPipeline = $true, ValueFromPipelineByPropertyName = $true)]
+        [string]
+        $ComputerName = $env:COMPUTERNAME
+    )
+
+    process
+    {
+        Write-Verbose ('Testing connectivity to {0}' -f $ComputerName)
+        [PSGComputer]::TestConnectivity($ComputerName)
+    }
+}
+#EndRegion '.\Public\Test-PSGComputerConnectivity.ps1' 65
