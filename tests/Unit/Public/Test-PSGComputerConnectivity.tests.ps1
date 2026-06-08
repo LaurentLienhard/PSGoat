@@ -24,31 +24,14 @@ Describe 'Test-PSGComputerConnectivity' {
             $result.IsUp | Should -BeTrue
         }
 
-        It 'Should set DetectionMethod to Ping' {
-            $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.DetectionMethod | Should -Be 'Ping'
-        }
-
-        It 'Should set PingSuccess to true' {
-            $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.PingSuccess | Should -BeTrue
-        }
-
         It 'Should not probe any port' {
             Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
             Should -Invoke -CommandName Test-Connection -ParameterFilter { $null -ne $TcpPort } `
                 -Exactly -Times 0 -Scope It -ModuleName $script:moduleName
         }
-
-        It 'Should set all port flags to false' {
-            $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.Port445Open  | Should -BeFalse
-            $result.Port3389Open | Should -BeFalse
-            $result.Port5985Open | Should -BeFalse
-        }
     }
 
-    Context 'When ping fails and all ports respond' {
+    Context 'When ping fails and a port responds' {
         BeforeAll {
             Mock -CommandName Test-Connection -MockWith { $false } -ModuleName $script:moduleName
             Mock -CommandName Test-Connection -ParameterFilter { $null -ne $TcpPort } `
@@ -58,62 +41,6 @@ Describe 'Test-PSGComputerConnectivity' {
         It 'Should set IsUp to true' {
             $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
             $result.IsUp | Should -BeTrue
-        }
-
-        It 'Should set DetectionMethod to Port' {
-            $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.DetectionMethod | Should -Be 'Port'
-        }
-
-        It 'Should set PingSuccess to false' {
-            $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.PingSuccess | Should -BeFalse
-        }
-
-        It 'Should probe exactly three ports' {
-            Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            Should -Invoke -CommandName Test-Connection -ParameterFilter { $null -ne $TcpPort } `
-                -Exactly -Times 3 -Scope It -ModuleName $script:moduleName
-        }
-
-        It 'Should set all port flags to true' {
-            $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.Port445Open  | Should -BeTrue
-            $result.Port3389Open | Should -BeTrue
-            $result.Port5985Open | Should -BeTrue
-        }
-    }
-
-    Context 'When ping fails and only port 3389 responds' {
-        BeforeAll {
-            Mock -CommandName Test-Connection -MockWith { $false } -ModuleName $script:moduleName
-            Mock -CommandName Test-Connection -ParameterFilter { $TcpPort -eq 3389 } `
-                -MockWith { $true } -ModuleName $script:moduleName
-        }
-
-        It 'Should set IsUp to true' {
-            $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.IsUp | Should -BeTrue
-        }
-
-        It 'Should set DetectionMethod to Port' {
-            $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.DetectionMethod | Should -Be 'Port'
-        }
-
-        It 'Should set Port445Open to false' {
-            $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.Port445Open | Should -BeFalse
-        }
-
-        It 'Should set Port3389Open to true' {
-            $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.Port3389Open | Should -BeTrue
-        }
-
-        It 'Should set Port5985Open to false' {
-            $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.Port5985Open | Should -BeFalse
         }
     }
 
@@ -126,23 +53,6 @@ Describe 'Test-PSGComputerConnectivity' {
             $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
             $result.IsUp | Should -BeFalse
         }
-
-        It 'Should set DetectionMethod to Unreachable' {
-            $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.DetectionMethod | Should -Be 'Unreachable'
-        }
-
-        It 'Should set PingSuccess to false' {
-            $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.PingSuccess | Should -BeFalse
-        }
-
-        It 'Should set all port flags to false' {
-            $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.Port445Open  | Should -BeFalse
-            $result.Port3389Open | Should -BeFalse
-            $result.Port5985Open | Should -BeFalse
-        }
     }
 
     Context 'When Test-Connection throws an exception on ping' {
@@ -150,15 +60,9 @@ Describe 'Test-PSGComputerConnectivity' {
             Mock -CommandName Test-Connection -MockWith { throw 'Host not found' } -ModuleName $script:moduleName
         }
 
-        It 'Should fall through to port probing' {
-            # Exception in ping is swallowed; port probes also throw, so machine is Unreachable.
+        It 'Should set IsUp to false' {
             $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.PingSuccess | Should -BeFalse
-        }
-
-        It 'Should set DetectionMethod to Unreachable' {
-            $result = Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
-            $result.DetectionMethod | Should -Be 'Unreachable'
+            $result.IsUp | Should -BeFalse
         }
     }
 

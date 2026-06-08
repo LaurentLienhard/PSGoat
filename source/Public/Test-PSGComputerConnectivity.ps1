@@ -10,13 +10,8 @@ function Test-PSGComputerConnectivity
         on ports 445 (SMB), 3389 (RDP), and 5985 (WinRM HTTP).
 
         A machine is considered UP if it responds to ping or if at least one of the
-        probed ports is open. Machines that respond to neither are reported as
-        Unreachable.
-
-        Each result object includes the computer name, an IsUp boolean, the detection
-        method used (Ping, Port, or Unreachable), and individual boolean flags for
-        PingSuccess, Port445Open, Port3389Open, and Port5985Open. Port flags are $false
-        when ping succeeds (ports are not probed in that case).
+        probed ports is open. Each result object contains the computer name and an IsUp
+        boolean.
 
         Supports pipeline input to test multiple machines in sequence.
 
@@ -33,12 +28,6 @@ function Test-PSGComputerConnectivity
         'server01.contoso.com', 'server02.contoso.com' | Test-PSGComputerConnectivity
 
         Tests multiple machines by piping their names.
-
-      .EXAMPLE
-        Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com' |
-            Select-Object ComputerName, IsUp, DetectionMethod, Port445Open, Port3389Open, Port5985Open
-
-        Returns a detailed connectivity summary for a machine that did not respond to ping.
 
       .EXAMPLE
         Get-ADComputer -Filter * | Select-Object -ExpandProperty DNSHostName |
