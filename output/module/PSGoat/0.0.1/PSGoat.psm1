@@ -331,13 +331,19 @@ class PSGDhcpScopeUtilization : PSGDhcpBase
             $this.ScopeId, $this.Name, $this.UtilizationPercent, ($this.InUse + $this.Reserved), $this.TotalAddresses
     }
 }
+<<<<<<< HEAD
 #EndRegion '.\Classes\12.PSGDhcpScopeUtilization.ps1' 106
 #Region '.\Classes\13.PSGComputer.ps1' -1
+=======
+#EndRegion './Classes/12.PSGDhcpScopeUtilization.ps1' 106
+#Region './Classes/13.PSGComputer.ps1' -1
+>>>>>>> b46609484bb4ee1e4851f4043d635acc371b0e80
 
 class PSGComputer
 {
     [string]$ComputerName
     [bool]$IsUp
+<<<<<<< HEAD
     [string]$DetectionMethod
     [bool]$PingSuccess
     [bool]$Port445Open
@@ -363,6 +369,15 @@ class PSGComputer
         $this.Port445Open     = $Port445Open
         $this.Port3389Open    = $Port3389Open
         $this.Port5985Open    = $Port5985Open
+=======
+
+    PSGComputer() {}
+
+    PSGComputer([string]$ComputerName, [bool]$IsUp)
+    {
+        $this.ComputerName = $ComputerName
+        $this.IsUp         = $IsUp
+>>>>>>> b46609484bb4ee1e4851f4043d635acc371b0e80
     }
 
     # Returns $true if the target responds to ICMP echo.
@@ -394,16 +409,24 @@ class PSGComputer
     # Tests machine reachability: ping first, then ports 445/3389/5985 if ping fails.
     static [PSGComputer] TestConnectivity([string]$ComputerName)
     {
+<<<<<<< HEAD
         $pingOk = [PSGComputer]::TestPing($ComputerName)
 
         if ($pingOk)
         {
             Write-Verbose ('[PSGComputer] {0} responded to ping' -f $ComputerName)
             return [PSGComputer]::new($ComputerName, $true, 'Ping', $true, $false, $false, $false)
+=======
+        if ([PSGComputer]::TestPing($ComputerName))
+        {
+            Write-Verbose ('[PSGComputer] {0} responded to ping' -f $ComputerName)
+            return [PSGComputer]::new($ComputerName, $true)
+>>>>>>> b46609484bb4ee1e4851f4043d635acc371b0e80
         }
 
         Write-Verbose ('[PSGComputer] {0}: ping failed, testing ports 445/3389/5985' -f $ComputerName)
 
+<<<<<<< HEAD
         $p445  = [PSGComputer]::TestPort($ComputerName, 445)
         $p3389 = [PSGComputer]::TestPort($ComputerName, 3389)
         $p5985 = [PSGComputer]::TestPort($ComputerName, 5985)
@@ -414,15 +437,32 @@ class PSGComputer
         Write-Verbose ('[PSGComputer] {0}: Port 445={1} 3389={2} 5985={3} -- IsUp={4}' -f $ComputerName, $p445, $p3389, $p5985, $reachable)
 
         return [PSGComputer]::new($ComputerName, $reachable, $method, $false, $p445, $p3389, $p5985)
+=======
+        $reachable = [PSGComputer]::TestPort($ComputerName, 445) -or
+                     [PSGComputer]::TestPort($ComputerName, 3389) -or
+                     [PSGComputer]::TestPort($ComputerName, 5985)
+
+        Write-Verbose ('[PSGComputer] {0}: IsUp={1}' -f $ComputerName, $reachable)
+
+        return [PSGComputer]::new($ComputerName, $reachable)
+>>>>>>> b46609484bb4ee1e4851f4043d635acc371b0e80
     }
 
     [string] ToString()
     {
+<<<<<<< HEAD
         return '[PSGComputer] {0} -- IsUp: {1} ({2})' -f $this.ComputerName, $this.IsUp, $this.DetectionMethod
     }
 }
 #EndRegion '.\Classes\13.PSGComputer.ps1' 88
 #Region '.\Classes\2.PSGLogger.ps1' -1
+=======
+        return '[PSGComputer] {0} -- IsUp: {1}' -f $this.ComputerName, $this.IsUp
+    }
+}
+#EndRegion './Classes/13.PSGComputer.ps1' 65
+#Region './Classes/2.PSGLogger.ps1' -1
+>>>>>>> b46609484bb4ee1e4851f4043d635acc371b0e80
 
 class PSGLogger
 {
@@ -2495,8 +2535,13 @@ function Get-PSGDnsZoneStat
         }
     }
 }
+<<<<<<< HEAD
 #EndRegion '.\Public\Get-PSGDnsZoneStat.ps1' 145
 #Region '.\Public\Test-PSGComputerConnectivity.ps1' -1
+=======
+#EndRegion './Public/Get-PSGDnsZoneStat.ps1' 145
+#Region './Public/Test-PSGComputerConnectivity.ps1' -1
+>>>>>>> b46609484bb4ee1e4851f4043d635acc371b0e80
 
 function Test-PSGComputerConnectivity
 {
@@ -2510,6 +2555,7 @@ function Test-PSGComputerConnectivity
         on ports 445 (SMB), 3389 (RDP), and 5985 (WinRM HTTP).
 
         A machine is considered UP if it responds to ping or if at least one of the
+<<<<<<< HEAD
         probed ports is open. Machines that respond to neither are reported as
         Unreachable.
 
@@ -2517,6 +2563,10 @@ function Test-PSGComputerConnectivity
         method used (Ping, Port, or Unreachable), and individual boolean flags for
         PingSuccess, Port445Open, Port3389Open, and Port5985Open. Port flags are $false
         when ping succeeds (ports are not probed in that case).
+=======
+        probed ports is open. Each result object contains the computer name and an IsUp
+        boolean.
+>>>>>>> b46609484bb4ee1e4851f4043d635acc371b0e80
 
         Supports pipeline input to test multiple machines in sequence.
 
@@ -2535,12 +2585,15 @@ function Test-PSGComputerConnectivity
         Tests multiple machines by piping their names.
 
       .EXAMPLE
+<<<<<<< HEAD
         Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com' |
             Select-Object ComputerName, IsUp, DetectionMethod, Port445Open, Port3389Open, Port5985Open
 
         Returns a detailed connectivity summary for a machine that did not respond to ping.
 
       .EXAMPLE
+=======
+>>>>>>> b46609484bb4ee1e4851f4043d635acc371b0e80
         Get-ADComputer -Filter * | Select-Object -ExpandProperty DNSHostName |
             Test-PSGComputerConnectivity |
             Where-Object -FilterScript { -not $_.IsUp }
@@ -2562,4 +2615,8 @@ function Test-PSGComputerConnectivity
         [PSGComputer]::TestConnectivity($ComputerName)
     }
 }
+<<<<<<< HEAD
 #EndRegion '.\Public\Test-PSGComputerConnectivity.ps1' 65
+=======
+#EndRegion './Public/Test-PSGComputerConnectivity.ps1' 54
+>>>>>>> b46609484bb4ee1e4851f4043d635acc371b0e80
