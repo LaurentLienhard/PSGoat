@@ -2,7 +2,7 @@
 
 # PSGoat
 
-A PowerShell module providing Windows system administration utilities: DNS auditing, DHCP monitoring, and more.
+A PowerShell module providing Windows system administration utilities: DNS auditing, DHCP monitoring, computer connectivity testing, and more.
 
 ## Requirements
 
@@ -15,6 +15,35 @@ A PowerShell module providing Windows system administration utilities: DNS audit
 ```powershell
 Install-Module -Name PSGoat
 ```
+
+## Computer Functions
+
+| Function | Description |
+|----------|-------------|
+| [`Test-PSGComputerConnectivity`](#test-psgcomputerconnectivity) | Tests whether a machine is reachable via ping, then falls back to TCP ports 445/3389/5985. |
+
+---
+
+### Test-PSGComputerConnectivity
+
+Tests machine reachability using a two-stage probe: ICMP echo first, then TCP ports 445 (SMB), 3389 (RDP), and 5985 (WinRM) if ping fails. Returns a `PSGComputer` object with `IsUp`, `DetectionMethod`, `PingSuccess`, and individual port flags.
+
+Requires PowerShell 7+ (uses `Test-Connection -TcpPort` for port probing).
+
+```powershell
+# Test a single machine
+Test-PSGComputerConnectivity -ComputerName 'server01.contoso.com'
+
+# Test multiple machines via pipeline
+'server01.contoso.com', 'server02.contoso.com' | Test-PSGComputerConnectivity
+
+# Find all unreachable AD computers
+Get-ADComputer -Filter * | Select-Object -ExpandProperty DNSHostName |
+    Test-PSGComputerConnectivity |
+    Where-Object -FilterScript { -not $_.IsUp }
+```
+
+---
 
 ## DHCP Functions
 
