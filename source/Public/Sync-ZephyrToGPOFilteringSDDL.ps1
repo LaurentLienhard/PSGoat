@@ -5,15 +5,11 @@ function Sync-ZephyrToGPOFilteringSDDL
         Synchronise le filtrage de sécurité d'une GPO avec la liste des ordinateurs Zephyr.
     .DESCRIPTION
         Supprime d'abord tous les ordinateurs de domaine présents dans le filtrage de sécurité
-        de la GPO cible, puis ajoute les postes retournés par l'API Zephyr dont le statut
-        correspond au statut cible, dans la limite du nombre maximum spécifié.
+        de la GPO cible via PSGGpo.ClearComputerAces(), puis ajoute les postes retournés par
+        l'API Zephyr dont le statut correspond au statut cible, dans la limite du nombre
+        maximum spécifié via PSGGpo.GrantComputerApplyRight().
 
-        Les trois ACE nécessaires à l'application d'une GPO sont injectées pour chaque ordinateur :
-          - (A;;GX;;;SID)                                  — Generic Execute
-          - (OA;;CR;;edacfd8f-ffb3-11d1-b41d-00a4ec21a286;SID) — Apply Group Policy
-          - (OA;;RP;;e47a4747-e549-11d1-bc91-00a4ec21a286;SID) — Read Group Policy
-
-        Les modifications sont appliquées en une seule transaction Active Directory.
+        Les modifications sont appliquées en une seule transaction Active Directory (PSGGpo.Save()).
     .PARAMETER BaseApiUrl
         URL de base de l'API Zephyr.
     .PARAMETER TargetGPOName
@@ -52,35 +48,21 @@ function Sync-ZephyrToGPOFilteringSDDL
         [Int]$MaxComputers
     )
 
-    $gpoApplyGuid = "edacfd8f-ffb3-11d1-b41d-00a4ec21a286"
-    $gpoReadGuid  = "e47a4747-e549-11d1-bc91-00a4ec21a286"
-
     try
     {
-        # Localisation de la GPO dans Active Directory
-        $gpoSearcher = [ADSISearcher]"(&(objectClass=groupPolicyContainer)(displayName=$TargetGPOName))"
-        $gpoSearchResult = $gpoSearcher.FindOne()
+        $gpo = [PSGGpo]::Get($TargetGPOName)
 
-        if (-not $gpoSearchResult)
+        if (-not $gpo)
         {
             Write-Error -Message "GPO introuvable dans Active Directory : '$TargetGPOName'."
             return
         }
 
-        $gpoEntry = $gpoSearchResult.GetDirectoryEntry()
-        Write-Verbose -Message "GPO trouvée : $($gpoEntry.distinguishedName)"
+        Write-Verbose -Message "GPO trouvée : $($gpo.DistinguishedName)"
 
-        $gpoSecurityDescriptor = $gpoEntry.ObjectSecurity
-        $currentSddl = $gpoSecurityDescriptor.GetSecurityDescriptorSddlForm(
-            [System.Security.AccessControl.AccessControlSections]::Access
-        )
-
-        # Suppression de tous les ordinateurs existants dans le filtrage
-        Write-Verbose -Message "Suppression des ordinateurs existants du filtrage de sécurité..."
-        $currentSddl = Remove-GPOComputerAce -Sddl $currentSddl
+        $gpo.ClearComputerAces()
         Write-Verbose -Message "Filtrage de sécurité nettoyé."
 
-        # Récupération de la liste des machines depuis l'API Zephyr
         $listUrl = "$BaseApiUrl/list/2"
         Write-Verbose -Message "Interrogation de l'API Zephyr : $listUrl"
         $computersList = Invoke-RestMethod -Uri $listUrl -Method Get -TimeoutSec 10 -ErrorAction Stop
@@ -113,7 +95,7 @@ function Sync-ZephyrToGPOFilteringSDDL
                 }
 
                 $computerSearcher = [ADSISearcher]"(&(objectClass=computer)(sAMAccountName=$pcName$))"
-                $computerResult = $computerSearcher.FindOne()
+                $computerResult   = $computerSearcher.FindOne()
 
                 if (-not $computerResult)
                 {
@@ -122,19 +104,14 @@ function Sync-ZephyrToGPOFilteringSDDL
                 }
 
                 $computerEntry = $computerResult.GetDirectoryEntry()
-                $computerSid = New-Object -TypeName System.Security.Principal.SecurityIdentifier -ArgumentList (
+                $computerSid   = New-Object -TypeName System.Security.Principal.SecurityIdentifier -ArgumentList (
                     $computerEntry.Properties.objectSid[0], 0
                 )
-                $sidString = $computerSid.Value
 
-                $aceGX = "(A;;GX;;;$sidString)"
-                $aceCR = "(OA;;CR;;$gpoApplyGuid;$sidString)"
-                $aceRP = "(OA;;RP;;$gpoReadGuid;$sidString)"
-
-                $currentSddl = $currentSddl + $aceGX + $aceCR + $aceRP
+                $gpo.GrantComputerApplyRight($computerSid.Value)
                 $addedCount++
 
-                Write-Verbose -Message "[$addedCount/$MaxComputers] Injecté : $pcName ($sidString)"
+                Write-Verbose -Message "[$addedCount/$MaxComputers] Injecté : $pcName ($($computerSid.Value))"
             }
             catch
             {
@@ -143,12 +120,9 @@ function Sync-ZephyrToGPOFilteringSDDL
             }
         }
 
-        # Application des changements dans Active Directory (transaction unique)
         if ($PSCmdlet.ShouldProcess($TargetGPOName, "Mise à jour du filtrage de sécurité GPO ($addedCount ordinateur(s) injecté(s))"))
         {
-            $gpoSecurityDescriptor.SetSecurityDescriptorSddlForm($currentSddl)
-            $gpoEntry.ObjectSecurity = $gpoSecurityDescriptor
-            $gpoEntry.CommitChanges()
+            $gpo.Save()
             Write-Verbose -Message "Synchronisation réussie : $addedCount ordinateur(s) injecté(s) dans '$TargetGPOName'."
         }
     }
