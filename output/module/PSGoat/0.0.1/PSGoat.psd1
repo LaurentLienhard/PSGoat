@@ -15,7 +15,7 @@ RootModule = 'PSGoat.psm1'
 ModuleVersion = '0.0.1'
 
 # Supported PSEditions
-# CompatiblePSEditions = @()
+CompatiblePSEditions = @('Core')
 
 # ID used to uniquely identify this module
 GUID = 'c9f110ca-246f-4856-bc34-8b5474b0f11a'
@@ -33,7 +33,7 @@ Copyright = '(c) LIENHARD Laurent. All rights reserved.'
 Description = 'PSGoat is a PowerShell utility module providing helper functions for system administration tasks.'
 
 # Minimum version of the PowerShell engine required by this module
-PowerShellVersion = '5.1'
+PowerShellVersion = '6.0'
 
 # Name of the PowerShell host required by this module
 # PowerShellHostName = ''
@@ -69,7 +69,7 @@ RequiredModules = @()
 # NestedModules = @()
 
 # Functions to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no functions to export.
-FunctionsToExport = @('Get-PSGDhcpScopeUtilization','Get-PSGDnsBrokenCname','Get-PSGDnsCnameChain','Get-PSGDnsDuplicateIp','Get-PSGDnsEntry','Get-PSGDnsForwardReverseMismatch','Get-PSGDnsOrphanEntry','Get-PSGDnsStaleEntry','Get-PSGDnsZoneStat','Test-PSGComputerConnectivity')
+FunctionsToExport = @()
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = @()
@@ -104,7 +104,7 @@ PrivateData = @{
         # IconUri = ''
 
         # ReleaseNotes of this module
-        ReleaseNotes = '## [0.0.1] - 2026-06-08
+        ReleaseNotes = '## [0.0.1] - 2026-06-09
 
 ### Added
 
