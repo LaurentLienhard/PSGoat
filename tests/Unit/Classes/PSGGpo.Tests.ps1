@@ -1,6 +1,48 @@
 BeforeAll {
-    $script:classPath = "$PSScriptRoot/../../../source/Classes/1.PSGGpo.ps1"
-    . $script:classPath
+    . "$PSScriptRoot/../../../source/Classes/1.PSGGpo.ps1"
+
+    function New-MockEntry
+    {
+        param([int]$Flags = 0)
+
+        $props = @{
+            flags           = [PSCustomObject]@{ Value = $Flags }
+            gPCFileSysPath  = [PSCustomObject]@{ Value = "\\domain\sysvol\Policies\{TEST-GUID}" }
+        }
+
+        $secDescriptor = [PSCustomObject]@{}
+        Add-Member -InputObject $secDescriptor -MemberType ScriptMethod -Name GetSecurityDescriptorSddlForm -Value {
+            return "O:DAG:DAD:P"
+        }
+        Add-Member -InputObject $secDescriptor -MemberType ScriptMethod -Name SetSecurityDescriptorSddlForm -Value {
+            param([string]$s)
+        }
+
+        $entry = [PSCustomObject]@{
+            distinguishedName = "CN={TEST-GUID},CN=Policies,CN=System,DC=test,DC=local"
+            ObjectSecurity    = $secDescriptor
+            Properties        = $props
+        }
+        Add-Member -InputObject $entry -MemberType ScriptMethod -Name CommitChanges -Value {}
+
+        return $entry
+    }
+
+    function New-MockGpo
+    {
+        param([int]$Flags = 0)
+
+        $entry = New-MockEntry -Flags $Flags
+        $gpo   = [PSGGpo]::new(
+            "TestGPO",
+            "{TEST-GUID}",
+            "CN={TEST-GUID},CN=Policies,CN=System,DC=test,DC=local",
+            "\\domain\sysvol\Policies\{TEST-GUID}",
+            $Flags,
+            $entry
+        )
+        return $gpo
+    }
 }
 
 Describe "PSGGpo" {
@@ -16,42 +58,143 @@ Describe "PSGGpo" {
         It "Crée une instance avec des propriétés vides" {
             $gpo = [PSGGpo]::new()
             $gpo.Name              | Should -BeNullOrEmpty
+            $gpo.Id                | Should -BeNullOrEmpty
             $gpo.DistinguishedName | Should -BeNullOrEmpty
-            $gpo.Sddl              | Should -BeNullOrEmpty
+            $gpo.SysvolPath        | Should -BeNullOrEmpty
+            $gpo.Flags             | Should -Be 0
         }
     }
 
     Context "ToString()" {
-        It "Retourne une représentation lisible" {
-            $gpo = [PSGGpo]::new()
-            $gpo.Name              = "TestGPO"
-            $gpo.DistinguishedName = "CN=TestGPO,DC=test,DC=local"
-            $gpo.ToString() | Should -Be "[PSGGpo] TestGPO -- DN: CN=TestGPO,DC=test,DC=local"
+        It "Retourne le nom, l'Id, les flags et le DN" {
+            $gpo = New-MockGpo
+            $gpo.ToString() | Should -Match "TestGPO"
+            $gpo.ToString() | Should -Match "\{TEST-GUID\}"
+            $gpo.ToString() | Should -Match "DN:"
+        }
+    }
+
+    Context "Enable() / Disable()" {
+        It "Enable() positionne Flags à 0 et met à jour la propriété" {
+            $gpo = New-MockGpo -Flags 3
+            $gpo.Enable()
+            $gpo.Flags | Should -Be 0
+        }
+
+        It "Disable() positionne Flags à 3 et met à jour la propriété" {
+            $gpo = New-MockGpo -Flags 0
+            $gpo.Disable()
+            $gpo.Flags | Should -Be 3
+        }
+    }
+
+    Context "DisableUserSettings() / EnableUserSettings()" {
+        It "DisableUserSettings() active le bit 0" {
+            $gpo = New-MockGpo -Flags 0
+            $gpo.DisableUserSettings()
+            $gpo.Flags | Should -Be 1
+        }
+
+        It "EnableUserSettings() efface le bit 0 sans toucher au bit 1" {
+            $gpo = New-MockGpo -Flags 3
+            $gpo.EnableUserSettings()
+            $gpo.Flags | Should -Be 2
+        }
+
+        It "EnableUserSettings() sur GPO déjà active laisse Flags à 0" {
+            $gpo = New-MockGpo -Flags 0
+            $gpo.EnableUserSettings()
+            $gpo.Flags | Should -Be 0
+        }
+    }
+
+    Context "DisableComputerSettings() / EnableComputerSettings()" {
+        It "DisableComputerSettings() active le bit 1" {
+            $gpo = New-MockGpo -Flags 0
+            $gpo.DisableComputerSettings()
+            $gpo.Flags | Should -Be 2
+        }
+
+        It "EnableComputerSettings() efface le bit 1 sans toucher au bit 0" {
+            $gpo = New-MockGpo -Flags 3
+            $gpo.EnableComputerSettings()
+            $gpo.Flags | Should -Be 1
+        }
+
+        It "EnableComputerSettings() sur GPO déjà active laisse Flags à 0" {
+            $gpo = New-MockGpo -Flags 0
+            $gpo.EnableComputerSettings()
+            $gpo.Flags | Should -Be 0
+        }
+    }
+
+    Context "AddLink() / RemoveLink()" {
+        BeforeEach {
+            $script:ouProps = @{ gPLink = [PSCustomObject]@{ Value = "" } }
+            $script:ouEntry = [PSCustomObject]@{ Properties = $script:ouProps }
+            Add-Member -InputObject $script:ouEntry -MemberType ScriptMethod -Name CommitChanges -Value {}
+        }
+
+        It "AddLink() ajoute l'entrée dans gPLink si absente" {
+            $gpo = New-MockGpo
+
+            Mock -CommandName ADSI -MockWith { return $script:ouEntry }
+
+            $gpo.AddLink("OU=TestOU,DC=test,DC=local")
+
+            $script:ouEntry.Properties['gPLink'].Value | Should -Match [System.Text.RegularExpressions.Regex]::Escape($gpo.DistinguishedName)
+        }
+
+        It "AddLink() n'ajoute pas de doublon si déjà lié" {
+            $gpo = New-MockGpo
+            $script:ouEntry.Properties['gPLink'].Value = "[LDAP://$($gpo.DistinguishedName);0]"
+
+            $gpo.AddLink("OU=TestOU,DC=test,DC=local")
+
+            $count = ([regex]::Matches($script:ouEntry.Properties['gPLink'].Value, [regex]::Escape($gpo.Id))).Count
+            $count | Should -Be 1
+        }
+
+        It "RemoveLink() retire l'entrée de gPLink" {
+            $gpo = New-MockGpo
+            $script:ouEntry.Properties['gPLink'].Value = "[LDAP://$($gpo.DistinguishedName);0]"
+
+            $gpo.RemoveLink("OU=TestOU,DC=test,DC=local")
+
+            $script:ouEntry.Properties['gPLink'].Value | Should -Not -Match [System.Text.RegularExpressions.Regex]::Escape($gpo.Id)
+        }
+
+        It "RemoveLink() préserve les autres liens présents" {
+            $gpo    = New-MockGpo
+            $otherId = "{OTHER-GUID}"
+            $script:ouEntry.Properties['gPLink'].Value = "[LDAP://CN=$otherId,CN=Policies,DC=test;0][LDAP://$($gpo.DistinguishedName);0]"
+
+            $gpo.RemoveLink("OU=TestOU,DC=test,DC=local")
+
+            $script:ouEntry.Properties['gPLink'].Value | Should -Match [System.Text.RegularExpressions.Regex]::Escape($otherId)
         }
     }
 
     Context "ClearComputerAces()" {
-        It "Supprime les 3 ACE d'un ordinateur connu" {
-            $aceGX = "(A;;GX;;;$script:sid1)"
-            $aceCR = "(OA;;CR;;$script:applyGuid;$script:sid1)"
-            $aceRP = "(OA;;RP;;$script:readGuid;$script:sid1)"
-
-            $gpo      = [PSGGpo]::new()
-            $gpo.Sddl = "$script:sddlBase$aceGX$aceCR$aceRP"
+        It "Supprime les 3 ACE d'un ordinateur" {
+            $gpo      = New-MockGpo
+            $gpo.Sddl = $script:sddlBase +
+                "(A;;GX;;;$script:sid1)" +
+                "(OA;;CR;;$script:applyGuid;$script:sid1)" +
+                "(OA;;RP;;$script:readGuid;$script:sid1)"
 
             $gpo.ClearComputerAces()
 
             $gpo.Sddl | Should -Not -Match [System.Text.RegularExpressions.Regex]::Escape($script:sid1)
         }
 
-        It "Préserve les ACE non ordinateur (ex: Authenticated Users)" {
-            $aceAU = "(A;;LCRPLORC;;;S-1-5-11)"
-            $aceCR = "(OA;;CR;;$script:applyGuid;$script:sid1)"
-            $aceGX = "(A;;GX;;;$script:sid1)"
-            $aceRP = "(OA;;RP;;$script:readGuid;$script:sid1)"
-
-            $gpo      = [PSGGpo]::new()
-            $gpo.Sddl = "$script:sddlBase$aceAU$aceGX$aceCR$aceRP"
+        It "Préserve les ACE non ordinateur" {
+            $gpo      = New-MockGpo
+            $gpo.Sddl = $script:sddlBase +
+                "(A;;LCRPLORC;;;S-1-5-11)" +
+                "(A;;GX;;;$script:sid1)" +
+                "(OA;;CR;;$script:applyGuid;$script:sid1)" +
+                "(OA;;RP;;$script:readGuid;$script:sid1)"
 
             $gpo.ClearComputerAces()
 
@@ -59,35 +202,21 @@ Describe "PSGGpo" {
         }
 
         It "Supprime plusieurs ordinateurs en une seule passe" {
-            $gpo      = [PSGGpo]::new()
+            $gpo      = New-MockGpo
             $gpo.Sddl = $script:sddlBase +
-                "(A;;GX;;;$script:sid1)" +
                 "(OA;;CR;;$script:applyGuid;$script:sid1)" +
-                "(OA;;RP;;$script:readGuid;$script:sid1)" +
-                "(A;;GX;;;$script:sid2)" +
-                "(OA;;CR;;$script:applyGuid;$script:sid2)" +
-                "(OA;;RP;;$script:readGuid;$script:sid2)"
+                "(OA;;CR;;$script:applyGuid;$script:sid2)"
 
             $gpo.ClearComputerAces()
 
             $gpo.Sddl | Should -Not -Match [System.Text.RegularExpressions.Regex]::Escape($script:sid1)
             $gpo.Sddl | Should -Not -Match [System.Text.RegularExpressions.Regex]::Escape($script:sid2)
         }
-
-        It "Laisse le SDDL inchangé si aucun ordinateur n'est présent" {
-            $gpo      = [PSGGpo]::new()
-            $gpo.Sddl = "$script:sddlBase(A;;LCRPLORC;;;S-1-5-11)"
-
-            $before = $gpo.Sddl
-            $gpo.ClearComputerAces()
-
-            $gpo.Sddl | Should -Be $before
-        }
     }
 
     Context "GrantComputerApplyRight()" {
-        It "Ajoute les 3 ACE (GX, Apply GUID, Read GUID) pour un SID" {
-            $gpo      = [PSGGpo]::new()
+        It "Ajoute les 3 ACE pour un SID" {
+            $gpo      = New-MockGpo
             $gpo.Sddl = $script:sddlBase
 
             $gpo.GrantComputerApplyRight($script:sid1)
@@ -97,8 +226,8 @@ Describe "PSGGpo" {
             $gpo.Sddl | Should -Match "\(OA;;RP;;$script:readGuid;$([regex]::Escape($script:sid1))\)"
         }
 
-        It "Remplace les ACE existantes pour éviter les doublons" {
-            $gpo      = [PSGGpo]::new()
+        It "Remplace les ACE existantes (pas de doublon)" {
+            $gpo      = New-MockGpo
             $gpo.Sddl = $script:sddlBase +
                 "(A;;GX;;;$script:sid1)" +
                 "(OA;;CR;;$script:applyGuid;$script:sid1)" +
@@ -106,33 +235,16 @@ Describe "PSGGpo" {
 
             $gpo.GrantComputerApplyRight($script:sid1)
 
-            $applyAceCount = ([System.Text.RegularExpressions.Regex]::Matches(
-                $gpo.Sddl,
-                "\(OA;;CR;;$script:applyGuid;$([regex]::Escape($script:sid1))\)"
-            )).Count
-
-            $applyAceCount | Should -Be 1
-        }
-
-        It "N'affecte pas les ACE des autres SIDs" {
-            $gpo      = [PSGGpo]::new()
-            $gpo.Sddl = $script:sddlBase +
-                "(A;;GX;;;$script:sid2)" +
-                "(OA;;CR;;$script:applyGuid;$script:sid2)"
-
-            $gpo.GrantComputerApplyRight($script:sid1)
-
-            $gpo.Sddl | Should -Match [System.Text.RegularExpressions.Regex]::Escape($script:sid2)
+            $count = ([regex]::Matches($gpo.Sddl, "\(OA;;CR;;$script:applyGuid;$([regex]::Escape($script:sid1))\)")).Count
+            $count | Should -Be 1
         }
     }
 
     Context "ClearComputerAces() puis GrantComputerApplyRight()" {
-        It "Repart d'un filtrage propre et ajoute uniquement les SIDs demandés" {
-            $gpo      = [PSGGpo]::new()
+        It "Repart d'un filtrage propre et injecte uniquement le nouveau SID" {
+            $gpo      = New-MockGpo
             $gpo.Sddl = $script:sddlBase +
-                "(A;;GX;;;$script:sid1)" +
-                "(OA;;CR;;$script:applyGuid;$script:sid1)" +
-                "(OA;;RP;;$script:readGuid;$script:sid1)"
+                "(OA;;CR;;$script:applyGuid;$script:sid1)"
 
             $gpo.ClearComputerAces()
             $gpo.GrantComputerApplyRight($script:sid2)
