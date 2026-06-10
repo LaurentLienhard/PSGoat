@@ -1,4 +1,5 @@
 BeforeAll {
+    . "$PSScriptRoot/../../../source/Classes/0.PSGGpoStatus.ps1"
     . "$PSScriptRoot/../../../source/Classes/1.PSGGpo.ps1"
 
     function New-MockEntry
@@ -30,15 +31,15 @@ BeforeAll {
 
     function New-MockGpo
     {
-        param([int]$Flags = 0)
+        param([PSGGpoStatus]$Status = [PSGGpoStatus]::AllEnabled)
 
-        $entry = New-MockEntry -Flags $Flags
+        $entry = New-MockEntry -Flags ([int]$Status)
         $gpo   = [PSGGpo]::new(
             "TestGPO",
             "{TEST-GUID}",
             "CN={TEST-GUID},CN=Policies,CN=System,DC=test,DC=local",
             "\\domain\sysvol\Policies\{TEST-GUID}",
-            $Flags,
+            $Status,
             $entry
         )
         return $gpo
@@ -61,70 +62,71 @@ Describe "PSGGpo" {
             $gpo.Id                | Should -BeNullOrEmpty
             $gpo.DistinguishedName | Should -BeNullOrEmpty
             $gpo.SysvolPath        | Should -BeNullOrEmpty
-            $gpo.Flags             | Should -Be 0
+            $gpo.Status            | Should -Be ([PSGGpoStatus]::AllEnabled)
         }
     }
 
     Context "ToString()" {
-        It "Retourne le nom, l'Id, les flags et le DN" {
+        It "Retourne le nom, l'Id, le statut et le DN" {
             $gpo = New-MockGpo
             $gpo.ToString() | Should -Match "TestGPO"
             $gpo.ToString() | Should -Match "\{TEST-GUID\}"
+            $gpo.ToString() | Should -Match "AllEnabled"
             $gpo.ToString() | Should -Match "DN:"
         }
     }
 
     Context "Enable() / Disable()" {
-        It "Enable() positionne Flags à 0 et met à jour la propriété" {
-            $gpo = New-MockGpo -Flags 3
+        It "Enable() positionne Status à AllEnabled" {
+            $gpo = New-MockGpo -Status ([PSGGpoStatus]::AllDisabled)
             $gpo.Enable()
-            $gpo.Flags | Should -Be 0
+            $gpo.Status | Should -Be ([PSGGpoStatus]::AllEnabled)
         }
 
-        It "Disable() positionne Flags à 3 et met à jour la propriété" {
-            $gpo = New-MockGpo -Flags 0
+        It "Disable() positionne Status à AllDisabled" {
+            $gpo = New-MockGpo -Status ([PSGGpoStatus]::AllEnabled)
             $gpo.Disable()
-            $gpo.Flags | Should -Be 3
+            $gpo.Status | Should -Be ([PSGGpoStatus]::AllDisabled)
         }
     }
 
     Context "DisableUserSettings() / EnableUserSettings()" {
-        It "DisableUserSettings() active le bit 0" {
-            $gpo = New-MockGpo -Flags 0
+        It "DisableUserSettings() passe de AllEnabled à UserSettingsDisabled" {
+            $gpo = New-MockGpo -Status ([PSGGpoStatus]::AllEnabled)
             $gpo.DisableUserSettings()
-            $gpo.Flags | Should -Be 1
+            $gpo.Status | Should -Be ([PSGGpoStatus]::UserSettingsDisabled)
         }
 
-        It "EnableUserSettings() efface le bit 0 sans toucher au bit 1" {
-            $gpo = New-MockGpo -Flags 3
+        It "EnableUserSettings() passe de AllDisabled à ComputerSettingsDisabled" {
+            $gpo = New-MockGpo -Status ([PSGGpoStatus]::AllDisabled)
             $gpo.EnableUserSettings()
-            $gpo.Flags | Should -Be 2
+            $gpo.Status | Should -Be ([PSGGpoStatus]::ComputerSettingsDisabled)
         }
 
-        It "EnableUserSettings() sur GPO déjà active laisse Flags à 0" {
-            $gpo = New-MockGpo -Flags 0
+        It "EnableUserSettings() sur GPO déjà active laisse Status à AllEnabled" {
+            $gpo = New-MockGpo -Status ([PSGGpoStatus]::AllEnabled)
             $gpo.EnableUserSettings()
-            $gpo.Flags | Should -Be 0
+            $gpo.Status | Should -Be ([PSGGpoStatus]::AllEnabled)
         }
     }
 
     Context "DisableComputerSettings() / EnableComputerSettings()" {
-        It "DisableComputerSettings() active le bit 1" {
-            $gpo = New-MockGpo -Flags 0
+        It "DisableComputerSettings() passe de AllEnabled à ComputerSettingsDisabled" {
+            $gpo = New-MockGpo -Status ([PSGGpoStatus]::AllEnabled)
             $gpo.DisableComputerSettings()
-            $gpo.Flags | Should -Be 2
+            $gpo.Status | Should -Be ([PSGGpoStatus]::ComputerSettingsDisabled)
         }
 
-        It "EnableComputerSettings() efface le bit 1 sans toucher au bit 0" {
-            $gpo = New-MockGpo -Flags 3
+        It "EnableComputerSettings() passe de AllDisabled à UserSettingsDisabled" {
+            $gpo = New-MockGpo -Status ([PSGGpoStatus]::AllDisabled)
             $gpo.EnableComputerSettings()
-            $gpo.Flags | Should -Be 1
+            $gpo.Status | Should -Be ([PSGGpoStatus]::UserSettingsDisabled)
         }
 
-        It "EnableComputerSettings() sur GPO déjà active laisse Flags à 0" {
-            $gpo = New-MockGpo -Flags 0
+        It "EnableComputerSettings() sur GPO déjà active laisse Status à AllEnabled" {
+            $gpo = New-MockGpo -Status ([PSGGpoStatus]::AllEnabled)
             $gpo.EnableComputerSettings()
-            $gpo.Flags | Should -Be 0
+            $gpo.Status | Should -Be ([PSGGpoStatus]::AllEnabled)
         }
     }
 

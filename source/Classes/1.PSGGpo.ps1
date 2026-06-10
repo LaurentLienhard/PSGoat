@@ -4,7 +4,7 @@ class PSGGpo
     [string]$Id
     [string]$DistinguishedName
     [string]$SysvolPath
-    [int]$Flags
+    [PSGGpoStatus]$Status
     [string]$Sddl
 
     hidden [object]$_entry
@@ -12,13 +12,13 @@ class PSGGpo
 
     PSGGpo() {}
 
-    PSGGpo([string]$Name, [string]$Id, [string]$DistinguishedName, [string]$SysvolPath, [int]$Flags, [object]$Entry)
+    PSGGpo([string]$Name, [string]$Id, [string]$DistinguishedName, [string]$SysvolPath, [PSGGpoStatus]$Status, [object]$Entry)
     {
         $this.Name                 = $Name
         $this.Id                   = $Id
         $this.DistinguishedName    = $DistinguishedName
         $this.SysvolPath           = $SysvolPath
-        $this.Flags                = $Flags
+        $this.Status               = $Status
         $this._entry               = $Entry
         $this._securityDescriptor  = $Entry.ObjectSecurity
         $this.Sddl = $this._securityDescriptor.GetSecurityDescriptorSddlForm(
@@ -41,9 +41,9 @@ class PSGGpo
         $dn         = [string]$entry.distinguishedName
         $id         = ($dn -split ',')[0] -replace '^CN=', ''
         $sysvolPath = [string]$entry.Properties['gPCFileSysPath'].Value
-        $flags      = [int]$entry.Properties['flags'].Value
+        $status     = [PSGGpoStatus][int]$entry.Properties['flags'].Value
 
-        return [PSGGpo]::new($DisplayName, $id, $dn, $sysvolPath, $flags, $entry)
+        return [PSGGpo]::new($DisplayName, $id, $dn, $sysvolPath, $status, $entry)
     }
 
     # Returns the distinguished names of all OUs and containers where this GPO is linked.
@@ -86,56 +86,56 @@ class PSGGpo
         $ouEntry.CommitChanges()
     }
 
-    # Enables all settings of this GPO (flags = 0).
+    # Enables all settings of this GPO.
     [void] Enable()
     {
-        $this._entry.Properties['flags'].Value = 0
+        $this._entry.Properties['flags'].Value = [int][PSGGpoStatus]::AllEnabled
         $this._entry.CommitChanges()
-        $this.Flags = 0
+        $this.Status = [PSGGpoStatus]::AllEnabled
     }
 
-    # Disables all settings of this GPO (flags = 3).
+    # Disables all settings of this GPO.
     [void] Disable()
     {
-        $this._entry.Properties['flags'].Value = 3
+        $this._entry.Properties['flags'].Value = [int][PSGGpoStatus]::AllDisabled
         $this._entry.CommitChanges()
-        $this.Flags = 3
+        $this.Status = [PSGGpoStatus]::AllDisabled
     }
 
-    # Disables only the User Configuration part of this GPO (bit 0).
+    # Disables only the User Configuration part of this GPO.
     [void] DisableUserSettings()
     {
-        $newFlags = $this.Flags -bor 1
-        $this._entry.Properties['flags'].Value = $newFlags
+        $newValue    = [int]$this.Status -bor 1
+        $this._entry.Properties['flags'].Value = $newValue
         $this._entry.CommitChanges()
-        $this.Flags = $newFlags
+        $this.Status = [PSGGpoStatus]$newValue
     }
 
     # Re-enables the User Configuration part of this GPO.
     [void] EnableUserSettings()
     {
-        $newFlags = $this.Flags -band (-bnot 1)
-        $this._entry.Properties['flags'].Value = $newFlags
+        $newValue    = [int]$this.Status -band (-bnot 1)
+        $this._entry.Properties['flags'].Value = $newValue
         $this._entry.CommitChanges()
-        $this.Flags = $newFlags
+        $this.Status = [PSGGpoStatus]$newValue
     }
 
-    # Disables only the Computer Configuration part of this GPO (bit 1).
+    # Disables only the Computer Configuration part of this GPO.
     [void] DisableComputerSettings()
     {
-        $newFlags = $this.Flags -bor 2
-        $this._entry.Properties['flags'].Value = $newFlags
+        $newValue    = [int]$this.Status -bor 2
+        $this._entry.Properties['flags'].Value = $newValue
         $this._entry.CommitChanges()
-        $this.Flags = $newFlags
+        $this.Status = [PSGGpoStatus]$newValue
     }
 
     # Re-enables the Computer Configuration part of this GPO.
     [void] EnableComputerSettings()
     {
-        $newFlags = $this.Flags -band (-bnot 2)
-        $this._entry.Properties['flags'].Value = $newFlags
+        $newValue    = [int]$this.Status -band (-bnot 2)
+        $this._entry.Properties['flags'].Value = $newValue
         $this._entry.CommitChanges()
-        $this.Flags = $newFlags
+        $this.Status = [PSGGpoStatus]$newValue
     }
 
     # Removes all domain computer ACEs from the security filtering SDDL (in memory, call Save() to persist).
@@ -182,6 +182,6 @@ class PSGGpo
 
     [string] ToString()
     {
-        return '[PSGGpo] {0} ({1}) -- Flags: {2} -- DN: {3}' -f $this.Name, $this.Id, $this.Flags, $this.DistinguishedName
+        return '[PSGGpo] {0} ({1}) -- Status: {2} -- DN: {3}' -f $this.Name, $this.Id, $this.Status, $this.DistinguishedName
     }
 }
