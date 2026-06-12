@@ -39,11 +39,11 @@ class PSGGpo
 
         $entry      = $result.GetDirectoryEntry()
         $dn         = [string]$entry.distinguishedName
-        $id         = ($dn -split ',')[0] -replace '^CN=', ''
-        $sysvolPath = [string]$entry.Properties['gPCFileSysPath'].Value
-        $status     = [PSGGpoStatus][int]$entry.Properties['flags'].Value
+        $gpoId      = ($dn -split ',')[0] -replace '^CN=', ''
+        $gpoSysvolPath = [string]$entry.Properties['gPCFileSysPath'].Value
+        $gpoStatus = [PSGGpoStatus][int]$entry.Properties['flags'].Value
 
-        return [PSGGpo]::new($DisplayName, $id, $dn, $sysvolPath, $status, $entry)
+        return [PSGGpo]::new($DisplayName, $gpoId, $dn, $gpoSysvolPath, $gpoStatus, $entry)
     }
 
     # Returns the distinguished names of all OUs and containers where this GPO is linked.
